@@ -60,14 +60,20 @@ class TestSecretScanner:
     """Tests for SecretScanner."""
 
     def test_scan_anthropic_api_key(self) -> None:
-        """Test scanning for Anthropic API keys."""
+        """Test scanning for API keys."""
         scanner = SecretScanner()
 
-        text = "API_KEY=sk-ant-1234567890abcdefghijklmnopqrstuvwxyz12345"
+        # Test Gemini API key
+        text = "API_KEY=AIzaSyC-abc123def456ghi789jkl012mno345pqr"
         findings = scanner.scan(text)
-
         assert len(findings) == 1
-        assert findings[0][0] == "Anthropic API Key"
+        assert findings[0][0] == "Google API Key (Gemini)"
+
+        # Test Anthropic API key
+        text2 = "API_KEY=sk-ant-1234567890abcdefghijklmnopqrstuvwxyz12345"
+        findings2 = scanner.scan(text2)
+        assert len(findings2) == 1
+        assert findings2[0][0] == "Anthropic API Key"
 
     def test_scan_slack_token(self) -> None:
         """Test scanning for Slack tokens."""

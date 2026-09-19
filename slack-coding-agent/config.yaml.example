@@ -24,9 +24,9 @@ github:
   # Optional: Default organization/user for repositories
   default_owner: ""
 
-anthropic:
-  # Anthropic API key (starts with sk-ant-)
-  api_key: ${ANTHROPIC_API_KEY}
+gemini:
+  # Google Gemini API key
+  api_key: ${GEMINI_API_KEY}
 
 security:
   # List of allowed Slack user IDs (empty list = all users allowed)
@@ -56,8 +56,8 @@ security:
   require_approval: true
 
 agent:
-  # Claude model to use
-  model: "claude-sonnet-4"
+  # Gemini model to use
+  model: "gemini-1.5-pro"
   
   # Total token budget per task
   max_tokens: 100000

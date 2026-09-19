@@ -47,7 +47,7 @@ class Worker:
             config.agent,
             config.docker,
             self.security_manager,
-            config.anthropic.api_key,
+            config.gemini.api_key,
         )
 
         logger.info(f"Worker {self.worker_id} initialized")

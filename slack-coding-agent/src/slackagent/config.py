@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+import yaml  # type: ignore[reportMissingModuleSource]
 
 
 @dataclass
@@ -29,8 +29,8 @@ class GitHubConfig:
 
 
 @dataclass
-class AnthropicConfig:
-    """Anthropic API configuration."""
+class GeminiConfig:
+    """Google Gemini API configuration."""
 
     api_key: str
 
@@ -57,9 +57,9 @@ class SecurityConfig:
 
 @dataclass
 class AgentConfig:
-    """Claude agent settings."""
+    """Gemini agent settings."""
 
-    model: str = "claude-sonnet-4"
+    model: str = "gemini-1.5-pro"
     max_tokens: int = 100000
     planning_budget: int = 20000
     implementation_budget: int = 80000
@@ -107,7 +107,7 @@ class Config:
 
     slack: SlackConfig
     github: GitHubConfig
-    anthropic: AnthropicConfig
+    gemini: GeminiConfig
     security: SecurityConfig = field(default_factory=SecurityConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -158,7 +158,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
     raw_config = _expand_env_vars(raw_config)
 
     # Validate required sections
-    required_sections = ["slack", "github", "anthropic"]
+    required_sections = ["slack", "github", "gemini"]
     for section in required_sections:
         if section not in raw_config:
             raise ValueError(f"Missing required configuration section: {section}")
@@ -167,7 +167,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
     try:
         slack_config = SlackConfig(**raw_config["slack"])
         github_config = GitHubConfig(**raw_config["github"])
-        anthropic_config = AnthropicConfig(**raw_config["anthropic"])
+        gemini_config = GeminiConfig(**raw_config["gemini"])
 
         # Optional sections with defaults
         security_config = SecurityConfig(**raw_config.get("security", {}))
@@ -180,7 +180,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
         config = Config(
             slack=slack_config,
             github=github_config,
-            anthropic=anthropic_config,
+            gemini=gemini_config,
             security=security_config,
             agent=agent_config,
             database=database_config,
@@ -218,9 +218,9 @@ def _validate_config(config: Config) -> None:
     if not key_path.exists():
         raise ValueError(f"GitHub private key file not found: {config.github.private_key_path}")
 
-    # Validate Anthropic API key
-    if not config.anthropic.api_key.startswith("sk-ant-"):
-        raise ValueError("Anthropic API key must start with 'sk-ant-'")
+    # Validate Gemini API key (basic check - not empty)
+    if not config.gemini.api_key or len(config.gemini.api_key) < 20:
+        raise ValueError("Gemini API key appears to be invalid")
 
     # Validate token budgets
     if config.agent.planning_budget + config.agent.implementation_budget > config.agent.max_tokens:
