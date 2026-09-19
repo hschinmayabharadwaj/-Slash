@@ -6,7 +6,12 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
+try:
+    import google.generativeai as genai  # type: ignore[import-not-found]
+except ImportError as exc:
+    raise ImportError(
+        "The Gemini SDK is required. Install it with 'pip install google-generativeai'."
+    ) from exc
 
 from .config import AgentConfig, DockerConfig
 from .security import SecurityManager

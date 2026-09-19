@@ -57,7 +57,7 @@ security:
 
 agent:
   # Gemini model to use
-  model: "gemini-1.5-pro"
+  model: "gemini-pro"
   
   # Total token budget per task
   max_tokens: 100000
