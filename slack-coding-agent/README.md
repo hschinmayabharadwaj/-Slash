@@ -1,12 +1,13 @@
 # Slack Coding Agent
 
-A security-hardened Slack bot that uses Claude to help with coding tasks through GitHub integration, featuring sandboxed execution, approval workflows, and comprehensive safety controls.
+A security-hardened Slack bot that uses Google Gemini to help with coding tasks through GitHub integration, featuring sandboxed execution, approval workflows, and comprehensive safety controls.
 
 ## Features
 
 - **Slack Integration**: Mention the bot in any channel to request coding assistance
 - **GitHub App Authentication**: Secure repository access with fine-grained permissions
 - **Sandboxed Execution**: Isolated Docker containers for all code execution
+- **Google Gemini AI**: Powered by Gemini 1.5 Pro for intelligent code generation
 - **Approval Workflows**: Human-in-the-loop review for sensitive operations
 - **Security Hardening**:
   - Secret scanning and sanitization
@@ -59,7 +60,7 @@ A security-hardened Slack bot that uses Claude to help with coding tasks through
 - Docker (for sandboxed execution)
 - GitHub App credentials
 - Slack App credentials
-- Anthropic API key
+- Google Gemini API key
 
 ### Setup
 
@@ -90,8 +91,8 @@ A security-hardened Slack bot that uses Claude to help with coding tasks through
      private_key_path: ${GITHUB_PRIVATE_KEY_PATH}
      installation_id: ${GITHUB_INSTALLATION_ID}
    
-   anthropic:
-     api_key: ${ANTHROPIC_API_KEY}
+   gemini:
+     api_key: ${GEMINI_API_KEY}
    
    security:
      allowed_users: []  # Empty = all users allowed
@@ -103,7 +104,7 @@ A security-hardened Slack bot that uses Claude to help with coding tasks through
      network_mode: "none"  # Docker network isolation
    
    agent:
-     model: "claude-sonnet-4"
+     model: "gemini-1.5-pro"
      max_tokens: 100000
      planning_budget: 20000
      implementation_budget: 80000
@@ -120,7 +121,7 @@ A security-hardened Slack bot that uses Claude to help with coding tasks through
    export GITHUB_APP_ID="123456"
    export GITHUB_PRIVATE_KEY_PATH="./github-app-key.pem"
    export GITHUB_INSTALLATION_ID="..."
-   export ANTHROPIC_API_KEY="sk-ant-..."
+   export GEMINI_API_KEY="AIza..."
    ```
 
 5. **Build the Docker image**:
@@ -171,7 +172,7 @@ python -m slackagent.cli --repo /path/to/repo --task "Add logging to API endpoin
 
 ### Agent Settings
 
-- **model**: Claude model to use
+- **model**: Gemini model to use
 - **max_tokens**: Total token budget per task
 - **planning_budget**: Tokens allocated for planning phase
 - **implementation_budget**: Tokens allocated for implementation phase

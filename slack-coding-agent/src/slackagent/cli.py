@@ -79,7 +79,7 @@ def main() -> None:
         config.agent,
         config.docker,
         security_manager,
-        config.anthropic.api_key,
+        config.gemini.api_key,
     )
 
     # Determine if repo is local path or GitHub repo

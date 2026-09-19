@@ -73,13 +73,13 @@ class SecretScanner:
 
     # Common secret patterns
     PATTERNS = [
+        (r"AIza[0-9A-Za-z\-_]{35}", "Google API Key (Gemini)"),
         (r"sk-ant-[a-zA-Z0-9\-_]{40,}", "Anthropic API Key"),
         (r"xox[baprs]-[a-zA-Z0-9\-]{10,}", "Slack Token"),
         (r"ghp_[a-zA-Z0-9]{36,}", "GitHub Personal Access Token"),
         (r"ghs_[a-zA-Z0-9]{36,}", "GitHub OAuth Token"),
         (r"github_pat_[a-zA-Z0-9_]{82}", "GitHub Fine-grained Token"),
         (r"AKIA[0-9A-Z]{16}", "AWS Access Key"),
-        (r"AIza[0-9A-Za-z\-_]{35}", "Google API Key"),
         (r"sk-[a-zA-Z0-9]{32,}", "Generic Secret Key"),
         (r"['\"]password['\"]:\s*['\"][^'\"]+['\"]", "Password in JSON"),
         (r"postgres://[^:]+:[^@]+@[^/]+", "Database Connection String"),
