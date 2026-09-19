@@ -1,0 +1,109 @@
+# Example configuration file for Slack Coding Agent
+# Copy this to config.yaml and fill in your credentials
+
+slack:
+  # Slack Bot User OAuth Token (starts with xoxb-)
+  bot_token: ${SLACK_BOT_TOKEN}
+  
+  # Slack App-Level Token (starts with xapp-) for Socket Mode
+  app_token: ${SLACK_APP_TOKEN}
+  
+  # Slack Signing Secret for verifying requests
+  signing_secret: ${SLACK_SIGNING_SECRET}
+
+github:
+  # GitHub App ID
+  app_id: ${GITHUB_APP_ID}
+  
+  # Path to GitHub App private key (.pem file)
+  private_key_path: ${GITHUB_PRIVATE_KEY_PATH}
+  
+  # GitHub App Installation ID
+  installation_id: ${GITHUB_INSTALLATION_ID}
+  
+  # Optional: Default organization/user for repositories
+  default_owner: ""
+
+anthropic:
+  # Anthropic API key (starts with sk-ant-)
+  api_key: ${ANTHROPIC_API_KEY}
+
+security:
+  # List of allowed Slack user IDs (empty list = all users allowed)
+  # Example: ["U01234ABCD", "U56789EFGH"]
+  allowed_users: []
+  
+  # Protected path patterns (agent cannot modify these files)
+  protected_paths:
+    - ".git/**"
+    - ".env*"
+    - "**/secrets/**"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/config.yaml"
+  
+  # Maximum file size the agent can read/write (in MB)
+  max_file_size_mb: 10
+  
+  # Docker network mode for sandbox containers
+  # Options: "none" (no network), "bridge" (limited network)
+  network_mode: "none"
+  
+  # Enable secret scanning on diffs
+  scan_secrets: true
+  
+  # Require approval for all operations
+  require_approval: true
+
+agent:
+  # Claude model to use
+  model: "claude-sonnet-4"
+  
+  # Total token budget per task
+  max_tokens: 100000
+  
+  # Token budget for planning phase
+  planning_budget: 20000
+  
+  # Token budget for implementation phase
+  implementation_budget: 80000
+  
+  # System prompt additions (optional)
+  system_prompt_suffix: ""
+
+database:
+  # Path to SQLite database for task tracking
+  path: "./data/tasks.db"
+
+docker:
+  # Docker image for sandbox execution
+  image: "slack-coding-agent-sandbox:latest"
+  
+  # Memory limit for containers (e.g., "512m", "1g")
+  memory_limit: "1g"
+  
+  # CPU limit for containers (e.g., "1.0" = 1 CPU)
+  cpu_limit: "1.0"
+  
+  # Container timeout in seconds
+  timeout: 300
+
+worker:
+  # Number of worker processes
+  num_workers: 2
+  
+  # Polling interval in seconds
+  poll_interval: 5
+  
+  # Maximum retries for failed tasks
+  max_retries: 3
+
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  
+  # Log file path (optional, logs to stdout if not set)
+  file: ""
+  
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
