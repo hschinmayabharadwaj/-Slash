@@ -8,7 +8,6 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
-import * as apprunner from 'aws-cdk-lib/aws-apprunner';
 import * as autoscaling from 'aws-cdk-lib/aws-applicationautoscaling';
 import * as events from 'aws-cdk-lib/aws-events';
 import { Construct } from 'constructs';
@@ -28,8 +27,6 @@ export class ComputeStack extends cdk.Stack {
   public readonly cluster: ecs.Cluster;
   public readonly botRepository: ecr.Repository;
   public readonly sandboxRepository: ecr.Repository;
-  public readonly dashboardRepository: ecr.Repository;
-  public dashboardService: ecs.FargateService | undefined;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -48,13 +45,6 @@ export class ComputeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteImages: true,
       lifecycleRules: [{ maxImageCount: 5 }],
-    });
-
-    this.dashboardRepository = new ecr.Repository(this, 'DashboardRepo', {
-      repositoryName: 'slack-agent-dashboard',
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteImages: true,
-      lifecycleRules: [{ maxImageCount: 10 }],
     });
 
     // ── ECS Cluster ───────────────────────────────────────────
@@ -105,10 +95,13 @@ export class ComputeStack extends cdk.Stack {
       ],
     }));
 
-    // Kill-switch read (SSM parameter checked by the worker on each task)
+    // Kill-switch + model-backend read (SSM parameters checked by the worker)
     taskRole.addToPolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
-      resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter/slack-agent/kill-switch`],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter/slack-agent/kill-switch`,
+        `arn:aws:ssm:${this.region}:${this.account}:parameter/slack-agent/model-backend`,
+      ],
     }));
 
     // ── Shared Secrets ────────────────────────────────────────
@@ -134,6 +127,18 @@ export class ComputeStack extends cdk.Stack {
     const geminiApiKey = secretsmanager.Secret.fromSecretNameV2(
       this, 'GeminiApiKey', 'slack-agent/GEMINI_API_KEY'
     );
+    // Optional — only used when MODEL_BACKEND=anthropic. Create it with:
+    //   aws secretsmanager create-secret --name slack-agent/ANTHROPIC_API_KEY \
+    //     --secret-string 'sk-ant-...' --region <region>
+    // Then deploy with INCLUDE_ANTHROPIC_API_KEY=true so the container can
+    // reference it. Kept OFF by default so bedrock/sim deploys need no key.
+    let anthropicSecretEnv: Record<string, ecs.Secret> = {};
+    if (process.env.INCLUDE_ANTHROPIC_API_KEY === 'true') {
+      const anthropicApiKey = secretsmanager.Secret.fromSecretNameV2(
+        this, 'AnthropicApiKey', 'slack-agent/ANTHROPIC_API_KEY'
+      );
+      anthropicSecretEnv = { ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(anthropicApiKey) };
+    }
 
     // ── Common Environment Variables ──────────────────────────
     const commonEnvironment: Record<string, string> = {
@@ -154,6 +159,7 @@ export class ComputeStack extends cdk.Stack {
       GITHUB_PRIVATE_KEY: ecs.Secret.fromSecretsManager(githubPrivateKey),
       GITHUB_INSTALLATION_ID: ecs.Secret.fromSecretsManager(githubInstallationId),
       GEMINI_API_KEY: ecs.Secret.fromSecretsManager(geminiApiKey),
+      ...anthropicSecretEnv,
       DB_PASSWORD: ecs.Secret.fromSecretsManager(props.dbSecret, 'password'),
       DB_HOST: ecs.Secret.fromSecretsManager(props.dbSecret, 'host'),
     };
@@ -167,8 +173,8 @@ export class ComputeStack extends cdk.Stack {
 
     const botTaskDef = new ecs.FargateTaskDefinition(this, 'BotTaskDef', {
       family: 'slack-agent-bot',
-      cpu: 1024,   // 1 vCPU
-      memoryLimitMiB: 2048,
+      cpu: 512,   // 0.5 vCPU — hard budget: bot + 1 worker + 2 sandboxes ≤ 3.0 vCPU
+      memoryLimitMiB: 1024,
       taskRole,
     });
 
@@ -239,7 +245,7 @@ export class ComputeStack extends cdk.Stack {
 
     const sandboxTaskDef = new ecs.FargateTaskDefinition(this, 'SandboxTaskDef', {
       family: 'slack-agent-sandbox',
-      cpu: 512,         // 0.5 vCPU — new-account Fargate vCPU quota is 4
+      cpu: 1024,        // 1.0 vCPU (max). Plan runs override to 0.5 vCPU at runtime.
       memoryLimitMiB: 2048,
       taskRole: sandboxTaskRole,
       executionRole: sandboxExecutionRole,
@@ -258,8 +264,8 @@ export class ComputeStack extends cdk.Stack {
 
     const workerTaskDef = new ecs.FargateTaskDefinition(this, 'WorkerTaskDef', {
       family: 'slack-agent-worker',
-      cpu: 512,    // 0.5 vCPU — fits the 4 vCPU new-account quota
-      memoryLimitMiB: 2048,
+      cpu: 512,    // 0.5 vCPU — hard budget: bot + 1 worker + 2 sandboxes ≤ 3.0 vCPU
+      memoryLimitMiB: 1024,
       taskRole,
     });
 
@@ -271,7 +277,6 @@ export class ComputeStack extends cdk.Stack {
         ...commonEnvironment,
         WORKER_MODE: 'true',
         SQS_MODE: 'true',
-        CLAUDE_CODE_USE_BEDROCK: '1',
         SLACKAGENT_TASKS_TABLE: props.taskTable.tableName,
         SLACKAGENT_AUDIT_TABLE: props.auditTable.tableName,
         AUDIT_TABLE: props.auditTable.tableName,
@@ -285,8 +290,17 @@ export class ComputeStack extends cdk.Stack {
         ),
         SANDBOX_SECURITY_GROUPS: props.botSecurityGroup.securityGroupId,
         SANDBOX_ASSIGN_PUBLIC_IP: 'ENABLED',
-        KILL_SWITCH_PARAM: `/slack-agent/kill-switch`,
+        KILL_SWITCH_PARAM: '/slack-agent/kill-switch',
+        MODEL_BACKEND_PARAM: '/slack-agent/model-backend', // resolved via SSM at runtime
         SANDBOX_IMAGE: this.sandboxRepository.repositoryUri + ':latest',
+        // ── Sandbox vCPU budget (≤3.0 total across bot/worker/sandboxes) ──
+        // bot 0.5 + worker 0.5 = 1.0 baseline; at most 2 sandboxes at 1.0 each.
+        MAX_CONCURRENT_SANDBOXES: '2',
+        SANDBOX_PLAN_CPU: '512',      // plan sandbox = 0.5 vCPU
+        SANDBOX_IMPLEMENT_CPU: '1024', // implement sandbox = 1.0 vCPU
+        SANDBOX_VCPU_BUDGET: '3.0',
+        SANDBOX_VCPU_BASELINE: '1.0',
+        GITHUB_OWNER: '',
       },
       secrets: commonSecrets,
       logging: ecs.LogDrivers.awsLogs({
@@ -303,11 +317,12 @@ export class ComputeStack extends cdk.Stack {
       serviceName: 'slack-agent-bot',
       cluster: this.cluster,
       taskDefinition: botTaskDef,
-      desiredCount: 0,
+      desiredCount: 1,
       assignPublicIp: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroups: [props.botSecurityGroup],
       minHealthyPercent: 0,
+      maxHealthyPercent: 200, // AZ rebalancing requires maximumPercent > 100
       circuitBreaker: { rollback: true },
       capacityProviderStrategies: [
         { capacityProvider: 'FARGATE', weight: 1 },
@@ -320,128 +335,23 @@ export class ComputeStack extends cdk.Stack {
       serviceName: 'slack-agent-worker',
       cluster: this.cluster,
       taskDefinition: workerTaskDef,
-      desiredCount: 0,
+      desiredCount: 1,
       assignPublicIp: true, // cheap demo: public subnets, no NAT
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroups: [props.botSecurityGroup],
       minHealthyPercent: 0,
+      maxHealthyPercent: 200, // AZ rebalancing requires maximumPercent > 100
       circuitBreaker: { rollback: true },
     });
 
-    // Auto-scale workers based on SQS queue depth
-    const workerScaling = workerService.autoScaleTaskCount({
-      minCapacity: 0,
-      maxCapacity: 10,
-    });
-    workerScaling.scaleOnMetric('ScaleOnQueueDepth', {
-      metric: props.taskQueue.metricApproximateNumberOfMessagesVisible(),
-      scalingSteps: [
-        { upper: 0, change: -1 },
-        { lower: 1, change: +1 },
-        { lower: 5, change: +2 },
-        { lower: 20, change: +4 },
-      ],
-    });
+    // Keep the worker service at a single live task; the task queue is processed
+    // shortly after the service starts and the autoscaling target can fail during
+    // stack updates when legacy zero-count services exist. A fixed count is more
+    // reliable for this demo deployment.
 
-    // ── App Runner: Dashboard ─────────────────────────────────
-    // DISABLED: App Runner is not enabled/subscribed in this account for us-east-2.
-    // To re-enable, subscribe to App Runner in the AWS console, then uncomment below.
-    //
-    // const appRunnerRole = new iam.Role(this, 'AppRunnerAccessRole', {
-    //   assumedBy: new iam.ServicePrincipal('build.apprunner.amazonaws.com'),
-    //   managedPolicies: [
-    //     iam.ManagedPolicy.fromAwsManagedPolicyName(
-    //       'service-role/AWSAppRunnerServicePolicyForECRAccess'
-    //     ),
-    //   ],
-    // });
-    //
-    // const appRunnerInstanceRole = new iam.Role(this, 'AppRunnerInstanceRole', {
-    //   assumedBy: new iam.ServicePrincipal('tasks.apprunner.amazonaws.com'),
-    // });
-    // props.taskTable.grantReadData(appRunnerInstanceRole);
-    //
-    // const dashboardService = new apprunner.CfnService(this, 'DashboardAppRunner', {
-    //   serviceName: 'slack-agent-dashboard',
-    //   sourceConfiguration: {
-    //     authenticationConfiguration: {
-    //       accessRoleArn: appRunnerRole.roleArn,
-    //     },
-    //     imageRepository: {
-    //       imageIdentifier: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/slack-agent-dashboard:latest`,
-    //       imageRepositoryType: 'ECR',
-    //       imageConfiguration: {
-    //         port: '80',
-    //         runtimeEnvironmentVariables: [
-    //           { name: 'DYNAMODB_TABLE', value: props.taskTable.tableName },
-    //           { name: 'AWS_REGION', value: this.region },
-    //         ],
-    //       },
-    //     },
-    //     autoDeploymentsEnabled: true,
-    //   },
-    //   instanceConfiguration: {
-    //     cpu: '1 vCPU',
-    //     memory: '2 GB',
-    //     instanceRoleArn: appRunnerInstanceRole.roleArn,
-    //   },
-    //   healthCheckConfiguration: {
-    //     path: '/health',
-    //     protocol: 'HTTP',
-    //     interval: 20,
-    //     timeout: 5,
-    //     healthyThreshold: 1,
-    //     unhealthyThreshold: 3,
-    //   },
-    //   autoScalingConfigurationArn: new apprunner.CfnAutoScalingConfiguration(
-    //     this, 'DashboardScaling', {
-    //       autoScalingConfigurationName: 'dashboard-scaling',
-    //       minSize: 1,
-    //       maxSize: 5,
-    //       maxConcurrency: 100,
-    //     }
-    //   ).attrAutoScalingConfigurationArn,
-    // });
-
-    // ── Fargate Service: Dashboard (nginx SPA) ────────────────
-    // App Runner and CloudFront are blocked until this account is verified,
-    // so the React dashboard is served by a small public Fargate task
-    // (0.25 vCPU / 512 MB) on port 80. All us-east-2.
-    const dashboardSg = new ec2.SecurityGroup(this, 'DashboardSg', {
-      vpc: props.vpc,
-      securityGroupName: 'slack-agent-dashboard-sg',
-      description: 'Public access to the demo dashboard',
-      allowAllOutbound: true,
-    });
-    dashboardSg.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(80),
-      'Allow HTTP on dashboard'
-    );
-
-    const dashboardTaskDef = new ecs.FargateTaskDefinition(this, 'DashboardTaskDef', {
-      family: 'slack-agent-dashboard',
-      cpu: 256,
-      memoryLimitMiB: 512,
-    });
-
-    dashboardTaskDef.addContainer('dashboard', {
-      containerName: 'dashboard',
-      image: ecs.ContainerImage.fromEcrRepository(this.dashboardRepository, 'latest'),
-      portMappings: [{ containerPort: 80 }],
-    });
-
-    const dashboardService = new ecs.FargateService(this, 'DashboardService', {
-      serviceName: 'slack-agent-dashboard',
-      cluster: this.cluster,
-      taskDefinition: dashboardTaskDef,
-      desiredCount: 1,
-      assignPublicIp: true,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      securityGroups: [dashboardSg],
-      minHealthyPercent: 0,
-    });
-    this.dashboardService = dashboardService;
+    // ── Dashboard ────────────────────────────────────────────
+    // Served in-process by the site Lambda behind the HTTP API (SlackAgentApi)
+    // — no Fargate service, no ECR image, no App Runner, no CloudFront/S3.
 
     // ── EC2 Dev Instance ──────────────────────────────────────
     const devRole = new iam.Role(this, 'DevInstanceRole', {
@@ -506,24 +416,14 @@ export class ComputeStack extends cdk.Stack {
       exportName: 'SlackAgentBotRepoUri',
     });
 
-    // App Runner output disabled (service commented out above)
-    // new cdk.CfnOutput(this, 'AppRunnerServiceUrl', {
-    //   value: cdk.Fn.sub('https://${Service}', {
-    //     Service: dashboardService.attrServiceUrl,
-    //   }),
-    //   exportName: 'SlackAgentAppRunnerUrl',
-    //   description: 'App Runner dashboard URL',
-    // });
+    new cdk.CfnOutput(this, 'SandboxRepoUri', {
+      value: this.sandboxRepository.repositoryUri,
+      exportName: 'SlackAgentSandboxRepoUri',
+    });
 
     new cdk.CfnOutput(this, 'DevInstanceId', {
       value: devInstance.instanceId,
       exportName: 'SlackAgentDevInstanceId',
-    });
-
-    new cdk.CfnOutput(this, 'DashboardTaskArn', {
-      value: dashboardService.cluster.clusterName,
-      exportName: 'SlackAgentDashboardCluster',
-      description: 'Run `aws ecs list-tasks --cluster <this> --service-name slack-agent-dashboard` for the public IP',
     });
   }
 }

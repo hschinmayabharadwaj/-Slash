@@ -178,6 +178,67 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
 }
 
+/* ─── Model chip (topbar) ───────────────────────────────────────────────────── */
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(88,166,255,.13);
+  color: var(--blue);
+  white-space: nowrap;
+}
+.model-chip--sim {
+  background: rgba(210,153,34,.16);
+  color: var(--yellow);
+}
+
+/* ─── SIM banner ─────────────────────────────────────────────────────────────── */
+.sim-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: rgba(210,153,34,.1);
+  border: 1px solid rgba(210,153,34,.3);
+  color: var(--yellow);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.sim-banner code { color: var(--yellow-light); font-size: 11px; }
+
+/* ─── SIM / model badges (task rows & detail) ──────────────────────────────── */
+.sim-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  background: rgba(210,153,34,.18);
+  color: var(--yellow);
+  vertical-align: middle;
+}
+.model-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: capitalize;
+  background: rgba(88,166,255,.16);
+  color: var(--blue);
+  vertical-align: middle;
+}
+
 /* ─── Page content ───────────────────────────────────────────────────────────── */
 .page-content {
   flex: 1;

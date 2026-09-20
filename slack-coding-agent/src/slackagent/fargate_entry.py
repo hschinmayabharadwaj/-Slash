@@ -74,8 +74,11 @@ def _git_baseline() -> None:
 
 
 def _git_diff(max_chars: int = 60000) -> str:
+    # Stage everything (including new/untracked files) then diff against the
+    # baseline so brand-new files created by the agent show up in the patch.
+    subprocess.run(["git", "-C", str(WORKSPACE), "add", "-A"], check=False)
     proc = subprocess.run(
-        ["git", "-C", str(WORKSPACE), "diff", "--no-color", "-U5"],
+        ["git", "-C", str(WORKSPACE), "diff", "HEAD", "--no-color", "-U5"],
         capture_output=True,
         text=True,
         check=False,
@@ -135,11 +138,34 @@ def _upload_result(bucket: str, run_id: str, returncode: int, stdout: str, stder
     )
 
 
-def _claude_json(prompt: str, timeout_s: int = 3600) -> dict:
-    """Run Claude Code non-interactively (Bedrock via task role)."""
+def _resolve_backend() -> str:
+    """Return the configured model backend: sim | anthropic | bedrock."""
+    backend = (os.environ.get("MODEL_BACKEND") or "bedrock").strip().lower()
+    if backend not in ("sim", "anthropic", "bedrock"):
+        logger.warning("unknown MODEL_BACKEND=%r — defaulting to bedrock", backend)
+        return "bedrock"
+    return backend
+
+
+def _claude_json(prompt: str, timeout_s: int = 3600, backend: str = "bedrock") -> dict:
+    """Run Claude Code non-interactively.
+
+    ``bedrock``   -> auth via the task role (``CLAUDE_CODE_USE_BEDROCK=1``)
+    ``anthropic`` -> auth via ``ANTHROPIC_API_KEY`` from the environment
+    """
     env = dict(os.environ)
-    env.setdefault("CLAUDE_CODE_USE_BEDROCK", "1")
-    env.setdefault("ANTHROPIC_BEDROCK_REGION", env.get("AWS_REGION", "us-east-1"))
+    if backend == "anthropic":
+        env["CLAUDE_CODE_USE_BEDROCK"] = "0"
+        if not env.get("ANTHROPIC_API_KEY"):
+            return {
+                "done": False,
+                "raw": {"content": [{"text": "Missing ANTHROPIC_API_KEY in sandbox environment"}]},
+                "returncode": 2,
+            }
+        env.setdefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    else:
+        env.setdefault("CLAUDE_CODE_USE_BEDROCK", "1")
+        env.setdefault("ANTHROPIC_BEDROCK_REGION", env.get("AWS_REGION", "us-east-1"))
     if os.environ.get("SANDBOX_CLAUDE_BEDROCK_PROFILE"):
         env["ANTHROPIC_BEDROCK_PROFILE"] = os.environ["SANDBOX_CLAUDE_BEDROCK_PROFILE"]
     proc = subprocess.run(
@@ -205,7 +231,7 @@ def _sim_implement(task_description: str) -> None:
     abs_target.write_text(existing + marker)
 
 
-def _run_sim(mode: str, task_input: dict, task_description: str) -> dict:
+def _run_sim(mode: str, task_input: dict, task_description: str, backend: str = "sim") -> dict:
     """Run the deterministic fallback path (no model, no Bedrock)."""
     if mode == "plan":
         return {
@@ -215,6 +241,7 @@ def _run_sim(mode: str, task_input: dict, task_description: str) -> dict:
             "cost_usd": 0.0,
             "num_turns": 0,
             "sim": True,
+            "model": backend,
         }
     _sim_implement(task_description)
     return {
@@ -224,6 +251,7 @@ def _run_sim(mode: str, task_input: dict, task_description: str) -> dict:
         "cost_usd": 0.0,
         "num_turns": 0,
         "sim": True,
+        "model": backend,
     }
 
 
@@ -265,13 +293,19 @@ def _run_agent(mode: str) -> int:
         )
         key = "implementation"
 
-    sim = os.environ.get("SANDBOX_SIM") == "1" or shutil.which("claude") is None
+    backend = _resolve_backend()
+    if backend != "sim" and shutil.which("claude") is None:
+        logger.warning(
+            "claude binary not installed; falling back to SIM backend for %s", mode
+        )
+        backend = "sim"
+    sim = backend == "sim"
     if sim:
-        logger.warning("no `claude` binary / SANDBOX_SIM=1 — using SIM backend for %s", mode)
-        output = _run_sim(mode, task_input, task_description)
+        logger.warning("MODEL_BACKEND=sim — using SIM backend for %s", mode)
+        output = _run_sim(mode, task_input, task_description, backend=backend)
         returncode = 0
     else:
-        result = _claude_json(prompt)
+        result = _claude_json(prompt, backend=backend)
         claude_text = _extract_text(result["raw"])
         if result["done"]:
             if key == "plan":
@@ -281,6 +315,8 @@ def _run_agent(mode: str) -> int:
                     "plan": _plan_object(claude_text),
                     "cost_usd": _cost_from_raw(result["raw"]),
                     "num_turns": 1,
+                    "sim": False,
+                    "model": backend,
                 }
             else:
                 output = {
@@ -289,6 +325,8 @@ def _run_agent(mode: str) -> int:
                     "summary": claude_text,
                     "cost_usd": _cost_from_raw(result["raw"]),
                     "num_turns": 1,
+                    "sim": False,
+                    "model": backend,
                 }
             returncode = 0
         else:
@@ -296,7 +334,7 @@ def _run_agent(mode: str) -> int:
                 "claude call failed (rc=%s); falling back to SIM backend for %s",
                 result["returncode"], mode,
             )
-            output = _run_sim(mode, task_input, task_description)
+            output = _run_sim(mode, task_input, task_description, backend=backend)
             returncode = 0
 
     (IO_DIR / "output.json").write_text(json.dumps(output))

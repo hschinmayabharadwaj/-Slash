@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 QUEUE_URL_ENV = "SQS_QUEUE_URL"
 KILL_SWITCH_PARAM_ENV = "KILL_SWITCH_PARAM"
+MODEL_BACKEND_PARAM_ENV = "MODEL_BACKEND_PARAM"
+VALID_MODEL_BACKENDS = ("sim", "anthropic", "bedrock")
 
 
 class TaskAbort(Exception):
@@ -78,7 +80,31 @@ class WorkerAWS:
         self._ssm = ssm
         self.sandbox_image = os.environ.get("SANDBOX_IMAGE", "slack-coding-agent-sandbox:latest")
         self._kill_param = os.environ.get(KILL_SWITCH_PARAM_ENV, "/slack-agent/kill-switch")
-        logger.info("WorkerAWS %s initialized (queue=%s)", self.worker_id, self.queue_url)
+        self._model_param = os.environ.get(MODEL_BACKEND_PARAM_ENV, "/slack-agent/model-backend")
+        # Resolve the model backend once and propagate it to the sandbox:
+        # sim → deterministic fake agent | anthropic → Claude API key |
+        # bedrock → Claude Code via the Bedrock task role (default)
+        self.model_backend = self.resolve_model_backend()
+        os.environ["MODEL_BACKEND"] = self.model_backend
+        logger.info(
+            "WorkerAWS %s initialized (queue=%s, model_backend=%s)",
+            self.worker_id, self.queue_url, self.model_backend,
+        )
+
+    # ------------------------------------------------------------------ model backend
+
+    def resolve_model_backend(self) -> str:
+        """Model backend = MODEL_BACKEND env, else SSM param, else bedrock."""
+        value = (os.environ.get("MODEL_BACKEND") or "").strip().lower()
+        if value in VALID_MODEL_BACKENDS:
+            return value
+        try:
+            value = self._ssm_client().get_parameter(Name=self._model_param)["Parameter"]["Value"].strip().lower()
+        except Exception:
+            value = ""
+        if value not in VALID_MODEL_BACKENDS:
+            value = "bedrock"
+        return value
 
     # ------------------------------------------------------------------ clients
 
@@ -213,6 +239,7 @@ class WorkerAWS:
                 api_key="",
             )
             output = read_output(io_dir, result)
+            self._record_model(task_id, output)
             plan = self.normalize_plan(output.get("plan"))
 
             if not plan["feasible"]:
@@ -271,6 +298,7 @@ class WorkerAWS:
                 api_key="",
             )
             output = read_output(io_dir, result)
+            self._record_model(task_id, output)
 
             sandbox_diff = output.get("diff") or ""
             if sandbox_diff.strip():
@@ -386,6 +414,14 @@ class WorkerAWS:
 
     def set_branch(self, task_id: str, branch: str) -> None:
         self.store.set_branch_raw(task_id, branch)
+
+    def _record_model(self, task_id: str, output: dict) -> None:
+        """Persist the model backend / SIM flag the sandbox actually used."""
+        try:
+            model = (output.get("model") or self.model_backend or "bedrock").strip()
+            self.store.set_task_model(task_id, model=model, sim=bool(output.get("sim")))
+        except Exception:
+            logger.warning("could not record model backend for %s", task_id, exc_info=True)
 
     def clone(self, task: dict, dest: Path, base: str = "main") -> None:
         repo_owner, repo_name = (task.get("repo") or "").split("/", 1) or ["", ""]

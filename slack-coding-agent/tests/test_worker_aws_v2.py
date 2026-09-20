@@ -1,5 +1,6 @@
 """Tests for the AWS worker (fake store tables, fake sandbox, fake GitHub ops)."""
 import json
+import os
 
 import pytest
 
@@ -193,3 +194,21 @@ def test_kill_switch_on(worker):
     assert worker.kill_switch_on() is False
     worker._ssm.value = "1"
     assert worker.kill_switch_on() is True
+
+
+def test_resolve_model_backend_falls_back_to_bedrock(worker, monkeypatch):
+    # FakeSSM returns "0" (invalid) and no env var → bedrock
+    monkeypatch.delenv("MODEL_BACKEND", raising=False)
+    assert worker.resolve_model_backend() == "bedrock"
+
+
+def test_resolve_model_backend_env_wins(worker, monkeypatch):
+    monkeypatch.setenv("MODEL_BACKEND", "sim")
+    assert worker.resolve_model_backend() == "sim"
+    assert os.environ.get("MODEL_BACKEND") == "sim"
+
+
+def test_resolve_model_backend_from_ssm(worker, monkeypatch):
+    monkeypatch.delenv("MODEL_BACKEND", raising=False)
+    worker._ssm.value = "anthropic"
+    assert WorkerAWS.resolve_model_backend(worker) == "anthropic"

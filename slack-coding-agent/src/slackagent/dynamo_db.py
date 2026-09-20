@@ -240,8 +240,8 @@ class DynamoDBStore:
     def update_task_plan(self, task_id: int, plan: str) -> None:
         self._table().update_item(
             Key={"taskId": str(task_id), "timestamp": "now"},
-            UpdateExpression="SET plan = :p, #u = :u",
-            ExpressionAttributeNames={"#u": "updated_at"},
+            UpdateExpression="SET #p = :p, #u = :u",
+            ExpressionAttributeNames={"#u": "updated_at", "#p": "plan"},
             ExpressionAttributeValues={":p": plan, ":u": self._now()},
             ConditionExpression="attribute_exists(taskId)",
         )
@@ -354,10 +354,25 @@ class DynamoDBStore:
             ConditionExpression="attribute_exists(taskId)",
         )
 
+    def set_task_model(self, task_id: str, *, model: str, sim: bool) -> None:
+        """Record which model backend (and whether SIM fallback) ran this task."""
+        self._table().update_item(
+            Key={"taskId": str(task_id), "timestamp": "now"},
+            UpdateExpression="SET model = :m, #s = :s, updatedAt = :u",
+            ExpressionAttributeNames={"#s": "sim"},
+            ExpressionAttributeValues={
+                ":m": model,
+                ":s": bool(sim),
+                ":u": self._now(),
+            },
+            ConditionExpression="attribute_exists(taskId)",
+        )
+
     def set_task_plan(self, task_id: str, plan: dict) -> None:
         self._table().update_item(
             Key={"taskId": str(task_id), "timestamp": "now"},
-            UpdateExpression="SET plan = :p, updatedAt = :u",
+            UpdateExpression="SET #p = :p, updatedAt = :u",
+            ExpressionAttributeNames={"#p": "plan"},
             ExpressionAttributeValues={":p": json.dumps(plan, sort_keys=True), ":u": self._now()},
             ConditionExpression="attribute_exists(taskId)",
         )

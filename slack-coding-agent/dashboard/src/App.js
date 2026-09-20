@@ -22,6 +22,8 @@ import {
   Code2,
   PlusCircle,
   ScrollText,
+  AlertTriangle,
+  Cpu,
 } from 'lucide-react';
 
 // Configure Amplify — falls back to dummy values so the app loads without real Cognito
@@ -180,6 +182,16 @@ function AppShell({ user, signOut }) {
           </div>
 
           <div className="topbar-actions">
+            {stats?.modelBackend && (
+              <span
+                className={`model-chip ${stats.simMode ? 'model-chip--sim' : ''}`}
+                title={`Model backend: ${stats.modelBackend}`}
+              >
+                <Cpu size={13} />
+                {stats.simMode ? 'SIM' : stats.modelBackend}
+              </span>
+            )}
+
             <div className={`bot-status ${botOnline ? 'bot-status--online' : 'bot-status--offline'}`}>
               {botOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
               <span>{botOnline ? 'Bot Online' : 'Bot Offline'}</span>
@@ -199,6 +211,18 @@ function AppShell({ user, signOut }) {
             </span>
           </div>
         </header>
+
+        {stats?.simMode && (
+          <div className="sim-banner">
+            <AlertTriangle size={14} />
+            <span>
+              SIM mode — sandboxes run the deterministic fake agent, not a real model
+              (backend: {stats.modelBackend || 'sim'}). Switch{' '}
+              <code>MODEL_BACKEND</code> to <code>bedrock</code> or{' '}
+              <code>anthropic</code> for real code generation.
+            </span>
+          </div>
+        )}
 
         {/* Page content */}
         <main className="page-content">

@@ -88,7 +88,7 @@ if [ "$SKIP_BUILD" = false ]; then
   header "Step 1: Building Docker Images"
 
   # Create ECR repositories if they don't exist
-  for REPO in slack-coding-agent slack-agent-sandbox slack-agent-dashboard; do
+  for REPO in slack-coding-agent slack-agent-sandbox; do
     aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" 2>/dev/null || {
       log "Creating ECR repository: $REPO"
       aws ecr create-repository --repository-name "$REPO" --region "$REGION" \
@@ -119,26 +119,38 @@ if [ "$SKIP_BUILD" = false ]; then
   docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-agent-sandbox:latest" 2>/dev/null || \
     docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-coding-agent:latest"
   success "Sandbox image pushed"
-
-  # Build dashboard image
-  log "Building slack-agent-dashboard image..."
-  if [ -d "dashboard" ]; then
-    docker build -t slack-agent-dashboard:latest -f dashboard/Dockerfile dashboard/
-    docker tag slack-agent-dashboard:latest "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-agent-dashboard:latest"
-    docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-agent-dashboard:latest"
-    success "Dashboard image pushed"
-  else
-    warn "Dashboard directory not found, skipping dashboard image"
-  fi
 else
   warn "Skipping Docker build (--skip-build)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 2: DEPLOY CDK INFRASTRUCTURE
+# STEP 2: BUILD THE DASHBOARD SPA (bundled into the site Lambda)
+# ═══════════════════════════════════════════════════════════════════════════
+# The React app is built with REACT_APP_SAME_ORIGIN=true and copied into
+# infrastructure/lambda/dashboard_api/spa/ so the HTTP API + site Lambda can
+# serve it from the same https origin (CloudFront / S3 / App Runner removed).
+# This MUST run before cdk synth because api-stack.ts fails without spa/index.html.
+if [ "$SKIP_DASHBOARD" = false ] && [ -d "dashboard" ]; then
+  header "Step 2: Building Dashboard SPA (same-origin, into site Lambda)"
+
+  cd infrastructure
+  npm run build:spa
+  cd ..
+
+  if [ ! -f "infrastructure/lambda/dashboard_api/spa/index.html" ]; then
+    error "SPA build produced no index.html — dashboard will not be served"
+  fi
+  success "Dashboard SPA built and bundled into site Lambda"
+else
+  [ "$SKIP_DASHBOARD" = true ] && warn "Skipping dashboard SPA build (--skip-dashboard)"
+  [ ! -d "dashboard" ] && warn "Dashboard directory not found"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 3: DEPLOY CDK INFRASTRUCTURE
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$SKIP_INFRA" = false ]; then
-  header "Step 2: Deploying CDK Infrastructure"
+  header "Step 3: Deploying CDK Infrastructure"
 
   cd infrastructure
 
@@ -168,9 +180,9 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 3: CREATE SECRETS IN SECRETS MANAGER
+# STEP 4: CREATE SECRETS IN SECRETS MANAGER
 # ═══════════════════════════════════════════════════════════════════════════
-header "Step 3: Verifying Secrets"
+header "Step 4: Verifying Secrets"
 
 SECRETS=(
   "slack-agent/SLACK_BOT_TOKEN"
@@ -190,45 +202,6 @@ for SECRET in "${SECRETS[@]}"; do
     echo "To create it: aws secretsmanager create-secret --name $SECRET --secret-string 'YOUR_VALUE' --region $REGION"
   }
 done
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 4: BUILD & DEPLOY DASHBOARD TO S3
-# ═══════════════════════════════════════════════════════════════════════════
-if [ "$SKIP_DASHBOARD" = false ] && [ -d "dashboard" ]; then
-  header "Step 4: Building & Deploying Dashboard"
-
-  cd dashboard
-
-  log "Installing dashboard dependencies..."
-  npm ci
-
-  log "Building React app..."
-  npm run build
-
-  # Get S3 bucket name from CDK outputs
-  DASHBOARD_BUCKET=$(jq -r '.SlackAgentFrontend.DashboardBucketName // empty' ../cdk-outputs.json 2>/dev/null)
-
-  if [ -n "$DASHBOARD_BUCKET" ]; then
-    log "Deploying to S3 bucket: $DASHBOARD_BUCKET"
-    aws s3 sync build/ "s3://$DASHBOARD_BUCKET/" --delete --region "$REGION"
-    success "Dashboard deployed to S3"
-
-    # Invalidate CloudFront cache
-    DISTRIBUTION_ID=$(jq -r '.SlackAgentFrontend.CloudFrontDistributionId // empty' ../cdk-outputs.json 2>/dev/null)
-    if [ -n "$DISTRIBUTION_ID" ]; then
-      log "Invalidating CloudFront cache..."
-      aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" >/dev/null
-      success "CloudFront cache invalidated"
-    fi
-  else
-    warn "Dashboard bucket not found in CDK outputs"
-  fi
-
-  cd ..
-else
-  [ "$SKIP_DASHBOARD" = true ] && warn "Skipping dashboard build (--skip-dashboard)"
-  [ ! -d "dashboard" ] && warn "Dashboard directory not found"
-fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # STEP 5: VERIFY DEPLOYMENT
@@ -252,11 +225,23 @@ done
 API_URL=$(jq -r '.SlackAgentApi.ApiUrl // empty' cdk-outputs.json 2>/dev/null)
 if [ -n "$API_URL" ]; then
   log "Testing API Gateway health endpoint..."
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}health")
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "${API_URL}health")
   if [ "$HTTP_CODE" = "200" ]; then
     success "API Gateway is healthy: $API_URL"
   else
     warn "API Gateway returned HTTP $HTTP_CODE"
+  fi
+fi
+
+# Check the HTTPS dashboard (HTTP API + site Lambda)
+DASHBOARD_URL=$(jq -r '.SlackAgentApi.DashboardUrl // empty' cdk-outputs.json 2>/dev/null)
+if [ -n "$DASHBOARD_URL" ]; then
+  log "Testing dashboard at $DASHBOARD_URL ..."
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "${DASHBOARD_URL}")
+  if [ "$HTTP_CODE" = "200" ]; then
+    success "Dashboard is healthy: $DASHBOARD_URL"
+  else
+    warn "Dashboard returned HTTP $HTTP_CODE (function may still be warming up)"
   fi
 fi
 
@@ -271,15 +256,13 @@ echo -e "${GREEN}                   SERVICE ENDPOINTS                        ${N
 echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
 
 if [ -f "cdk-outputs.json" ]; then
-  DASHBOARD_URL=$(jq -r '.SlackAgentFrontend.DashboardCloudFrontUrl // empty' cdk-outputs.json)
+  DASHBOARD_URL=$(jq -r '.SlackAgentApi.DashboardUrl // empty' cdk-outputs.json)
   API_URL=$(jq -r '.SlackAgentApi.ApiUrl // empty' cdk-outputs.json)
   WEBHOOK_URL=$(jq -r '.SlackAgentApi.WebhookUrl // empty' cdk-outputs.json)
-  APP_RUNNER_URL=$(jq -r '.SlackAgentCompute.AppRunnerServiceUrl // empty' cdk-outputs.json)
 
-  [ -n "$DASHBOARD_URL" ] && echo -e "${BLUE}🌐 Dashboard:${NC} $DASHBOARD_URL"
+  [ -n "$DASHBOARD_URL" ] && echo -e "${BLUE}🌐 Dashboard (HTTPS):${NC} $DASHBOARD_URL"
   [ -n "$API_URL" ] && echo -e "${BLUE}🔌 API Gateway:${NC} $API_URL"
   [ -n "$WEBHOOK_URL" ] && echo -e "${BLUE}🪝 Slack Webhook:${NC} $WEBHOOK_URL"
-  [ -n "$APP_RUNNER_URL" ] && echo -e "${BLUE}🏃 App Runner:${NC} $APP_RUNNER_URL"
 
   echo ""
   echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"

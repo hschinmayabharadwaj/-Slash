@@ -4,11 +4,17 @@ The checkout and the I/O files are passed to the task through S3 and the task
 is launched with ``ecs:RunTask`` in ``awsvpc`` networking mode.  Security
 properties that differ from :class:`DockerSandbox`:
 
-* No GitHub token and no provider API key ever enter the container.  The task
-  role is limited to its own S3 prefix plus ``bedrock:InvokeModel`` and the
-  container is started with ``CLAUDE_CODE_USE_BEDROCK=1`` so the agent uses the
-  task role against Amazon Bedrock instead of a key.
+* No GitHub token and no provider API key ever enter the container by default.
+  The task role is limited to its own S3 prefix plus ``bedrock:InvokeModel``,
+  and the agent backend is chosen per launch by ``MODEL_BACKEND``:
+
+    ``sim``       -> deterministic fake agent, no model call (cost \$0)
+    ``bedrock``   -> Claude Code against Bedrock via the task role
+    ``anthropic`` -> Claude direct API; the worker injects ``ANTHROPIC_API_KEY``
+
 * A hard wall-clock timeout is enforced by stopping the task.
+* A max-concurrent-sandbox gate plus a vCPU budget hold the fleet within the
+  configured cap (bot 0.5 + 1 worker 0.5 + up to 2 sandboxes × 1.0 = 3.0 vCPU).
 
 The container side that performs the S3 bootstrap is
 :mod:`slackagent.fargate_entry`; it is shipped inside the sandbox image.
@@ -31,6 +37,8 @@ from .sandbox import SandboxResult
 
 logger = logging.getLogger(__name__)
 
+VALID_MODEL_BACKENDS = ("sim", "anthropic", "bedrock")
+
 
 @dataclass
 class FargateConfig:
@@ -46,10 +54,20 @@ class FargateConfig:
     poll_interval: float = 1.0
     platform_version: str = "1.4.0"
     assign_public_ip: str = "ENABLED"
+    model_backend: str = "bedrock"
+    plan_cpu: int = 512
+    implement_cpu: int = 1024
+    max_concurrent_sandboxes: int = 2
+    vcpu_budget: float = 3.0
+    vcpu_baseline: float = 1.0
+    gate_wait_max: float = 300.0
 
     @classmethod
     def from_env(cls) -> "FargateConfig":
         """Build a config from environment variables (AWS deployment defaults)."""
+        backend = (os.environ.get("MODEL_BACKEND") or "bedrock").strip().lower()
+        if backend not in VALID_MODEL_BACKENDS:
+            backend = "bedrock"
         return cls(
             bucket=os.environ.get("SANDBOX_BUCKET", ""),
             cluster=os.environ.get("SANDBOX_CLUSTER", ""),
@@ -59,6 +77,12 @@ class FargateConfig:
             security_group_ids=_csv(os.environ.get("SANDBOX_SECURITY_GROUPS", "")),
             region=os.environ.get("AWS_REGION", "us-east-1"),
             assign_public_ip=os.environ.get("SANDBOX_ASSIGN_PUBLIC_IP", "ENABLED"),
+            model_backend=backend,
+            plan_cpu=int(os.environ.get("SANDBOX_PLAN_CPU", "512") or 512),
+            implement_cpu=int(os.environ.get("SANDBOX_IMPLEMENT_CPU", "1024") or 1024),
+            max_concurrent_sandboxes=int(os.environ.get("MAX_CONCURRENT_SANDBOXES", "2") or 2),
+            vcpu_budget=float(os.environ.get("SANDBOX_VCPU_BUDGET", "3.0") or 3.0),
+            vcpu_baseline=float(os.environ.get("SANDBOX_VCPU_BASELINE", "1.0") or 1.0),
         )
 
 
@@ -149,12 +173,15 @@ class FargateSandbox:
         """
         if api_key:
             logger.warning(
-                "FargateSandbox.run_agent ignores api_key (Bedrock task-role auth used instead)"
+                "FargateSandbox.run_agent ignores api_key (model backend auth is used instead)"
             )
         key_prefix = f"sandbox/{uuid.uuid4().hex}"
         self._upload_checkout(repo_dir, key_prefix)
         self._upload_io_dir(io_dir, key_prefix)
 
+        cpu = self.config.implement_cpu
+        if mode == "plan":
+            cpu = self.config.plan_cpu
         command = ["python", "-m", "slackagent.fargate_entry", "agent", mode]
         return self._run_task(
             key_prefix=key_prefix,
@@ -163,6 +190,7 @@ class FargateSandbox:
             timeout_s=timeout_s,
             pull_io_back=True,
             io_dir=Path(io_dir),
+            cpu=cpu,
         )
 
     def run_checks(
@@ -213,9 +241,8 @@ class FargateSandbox:
         for image in dict.fromkeys(images):
             if not image:
                 problems.append("empty sandbox image name configured")
-        if not os.environ.get("CLAUDE_CODE_USE_BEDROCK"):
-            if os.environ.get("CLAUDE_CODE_USE_BEDROCK", "1") != "1":
-                problems.append("CLAUDE_CODE_USE_BEDROCK must be set to 1 in the worker")
+        if self.config.model_backend == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+            problems.append("MODEL_BACKEND=anthropic but ANTHROPIC_API_KEY is not set on the worker")
         return problems
 
     def config_shim_image(self) -> str:
@@ -223,6 +250,73 @@ class FargateSandbox:
         return "slack-coding-agent-sandbox:latest"
 
     # ------------------------------------------------------------------ internals
+
+    def _wait_for_sandbox_slot(self, ecs, cpu: int) -> None:
+        """Block until a sandbox can launch within the fleet vCPU budget.
+
+        A launch is allowed only when both hold:
+
+        * running sandbox count < ``max_concurrent_sandboxes``, and
+        * ``vcpu_baseline + running_sandbox_vcpu + this_cpu <= vcpu_budget``.
+
+        The baseline covers the bot (0.5) + one worker (0.5) so the default
+        budget of 3.0 permits at most 2 running sandboxes at 1.0 each.
+        If ECS task listing is unavailable (tests/stubs) the gate is skipped.
+        """
+        if self.config.max_concurrent_sandboxes <= 0:
+            return
+        try:
+            getattr(ecs, "list_tasks")
+        except AttributeError:
+            return
+        deadline = time.monotonic() + self.config.gate_wait_max
+        while True:
+            running = self._count_running_sandbox_vcpu(ecs)
+            if running is None:
+                return
+            launch_vcpu = max(cpu, 1) / 1024.0
+            if running < self.config.max_concurrent_sandboxes and (
+                self.config.vcpu_baseline + running + launch_vcpu
+            ) <= self.config.vcpu_budget:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "sandbox concurrency/vCPU budget exceeded "
+                    f"(max_concurrent={self.config.max_concurrent_sandboxes}, "
+                    f"budget={self.config.vcpu_budget}, running={running:.1f}, "
+                    f"requested={launch_vcpu:.1f})"
+                )
+            time.sleep(self.config.poll_interval)
+
+    def _count_running_sandbox_vcpu(self, ecs) -> Optional[float]:
+        """Estimate running sandbox vCPU via ECS task counts.
+
+        Conservative: every running task is billed at the task definition's
+        registered CPU (plan overrides down are ignored). Returns None when the
+        ECS client doesn't support the APIs used (unit-test stubs).
+        """
+        try:
+            resp = ecs.list_tasks(cluster=self.config.cluster, family=os.environ.get("SANDBOX_TASK_DEFINITION", "") or self.config.task_definition)
+            arns = resp.get("taskArns") or []
+            if not arns:
+                return 0.0
+            details = ecs.describe_tasks(cluster=self.config.cluster, tasks=arns[:20])
+            running = [
+                t for t in (details.get("tasks") or [])
+                if (t.get("lastStatus") or "") == "RUNNING"
+            ]
+            return len(running) * self._sandbox_task_cpu(ecs)
+        except Exception as exc:  # pragma: no cover - stub/network tolerance
+            logger.warning("sandbox vCPU accounting unavailable (%s); skipping gate", exc)
+            return None
+
+    def _sandbox_task_cpu(self, ecs) -> float:
+        try:
+            resp = ecs.describe_task_definition(taskDefinition=self.config.task_definition)
+            cpu = int((resp.get("taskDefinition") or {}).get("cpu", "1024"))
+            return cpu / 1024.0
+        except Exception:  # pragma: no cover
+            return 1.0
 
     def _upload_checkout(self, repo_dir: Path, key_prefix: str) -> str:
         """Tar (without ``.git``) the checkout into S3 under ``key_prefix``."""
@@ -270,22 +364,45 @@ class FargateSandbox:
         timeout_s: int,
         pull_io_back: bool,
         io_dir: Optional[Path] = None,
+        cpu: Optional[int] = None,
     ) -> SandboxResult:
         s3 = self._s3_client()
         ecs = self._ecs_client()
 
+        # ── Model backend: choose how the sandbox runs the agent ──
+        # sim       → no model call at all (deterministic fake agent)
+        # anthropic → Claude direct API; worker injects ANTHROPIC_API_KEY
+        # bedrock   → Claude Code via the Bedrock task role
+        backend = self.config.model_backend
+        env_entries = [
+            {"name": "S3_BUCKET", "value": self.config.bucket},
+            {"name": "SANDBOX_RUN_ID", "value": key_prefix},
+            {"name": "MODEL_BACKEND", "value": backend},
+            {"name": "AWS_REGION", "value": self._region},
+            {"name": "PYTHONUNBUFFERED", "value": "1"},
+        ]
+        if backend == "anthropic":
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if api_key:
+                env_entries.append({"name": "ANTHROPIC_API_KEY", "value": api_key})
+                env_entries.append({"name": "CLAUDE_CODE_USE_BEDROCK", "value": "0"})
+        else:
+            # bedrock (default) and sim both run without any provider key
+            env_entries.append({"name": "CLAUDE_CODE_USE_BEDROCK", "value": "1"})
+
         container_overrides = {
             "name": self.config.container_name,
-            "image": image,
             "command": command,
-            "environment": [
-                {"name": "S3_BUCKET", "value": self.config.bucket},
-                {"name": "SANDBOX_RUN_ID", "value": key_prefix},
-                {"name": "CLAUDE_CODE_USE_BEDROCK", "value": "1"},
-                {"name": "AWS_REGION", "value": self._region},
-                {"name": "PYTHONUNBUFFERED", "value": "1"},
-            ],
+            "environment": env_entries,
         }
+
+        # ── Fleet cap: at most MAX_CONCURRENT_SANDBOXES and total vCPU ≤ budget ──
+        self._wait_for_sandbox_slot(ecs, cpu or self.config.implement_cpu)
+
+        overrides: dict[str, Any] = {"containerOverrides": [container_overrides]}
+        if cpu:
+            overrides["cpu"] = str(cpu)
+
         response = ecs.run_task(
             cluster=self.config.cluster,
             taskDefinition=self.config.task_definition,
@@ -298,7 +415,7 @@ class FargateSandbox:
                 }
             },
             count=1,
-            overrides={"containerOverrides": [container_overrides]},
+            overrides=overrides,
             propagateTags="TASK_DEFINITION",
         )
 

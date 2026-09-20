@@ -8,8 +8,12 @@ import {
   MOCK_INFRA_STATUS,
 } from './mockData';
 
+const SAME_ORIGIN = process.env.REACT_APP_SAME_ORIGIN === 'true';
 const API_URL = process.env.REACT_APP_API_URL;
-const USE_MOCK = !API_URL;
+const API_BASE = (API_URL || '').replace(/\/+$/, '');
+// Same-origin mode (site Lambda behind the HTTP API) serves the SPA and the
+// dashboard API from one https origin, so API_BASE stays empty and no mock is used.
+const USE_MOCK = !SAME_ORIGIN && !API_URL;
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
@@ -25,7 +29,7 @@ async function getAuthHeaders() {
 
 async function apiFetch(path, options = {}) {
   const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -128,6 +132,8 @@ function backendToDisplay(t) {
     durationMs: null,
     prUrl: t.prUrl,
     prNumber: t.prNumber,
+    sim: t.sim === true || t.sim === 'true' || t.sim === 1,
+    model: t.model || t.modelBackend || null,
   };
 }
 
@@ -244,6 +250,8 @@ export async function fetchStats() {
     statusDistribution: Object.entries(displayed).map(([name, value]) => ({ name, value })),
     recentActivity: [],
     infraStatus: null,
+    modelBackend: stats.modelBackend || metrics.modelBackend || null,
+    simMode: stats.simMode === true || metrics.simMode === true || false,
   };
 }
 

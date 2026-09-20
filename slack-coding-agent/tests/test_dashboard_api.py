@@ -106,7 +106,11 @@ def test_create_task_success(dashboard, env):
     body = __import__("json").loads(resp["body"])
     assert body["taskId"].startswith("task-")
     with env as f:
-        assert f["tasks"]._get({"taskId": body["taskId"], "timestamp": "now"})["status"] == "READY"
+        item = f["tasks"]._get({"taskId": body["taskId"], "timestamp": "now"})
+        assert item["status"] == "READY"
+        # model backend is recorded on the item (defaults to bedrock when SSM is invalid)
+        assert item.get("modelBackend") == "bedrock"
+        assert item.get("model") == "bedrock"
 
 
 def test_create_task_idempotent_on_client_token(dashboard, env):
@@ -140,6 +144,23 @@ def test_stats_and_metrics(dashboard, env):
     assert metrics["counts"]["READY"] == 1
 
 
+def test_stats_and_metrics_report_model_backend(dashboard, env):
+    from dashboard_api import dashboard as d
+    # SSM returns an invalid value for the model-backend param → falls back to bedrock
+    d.ssm.values["/slack-agent/model-backend"] = "not-a-backend"
+    for path in ("/stats", "/metrics"):
+        d._model_backend_cache["value"] = None
+        body = __import__("json").loads(d.handler(_event("GET", path), None)["body"])
+        assert body["modelBackend"] == "bedrock"
+        assert body["simMode"] is False
+    # Valid SIM value propagates too
+    d.ssm.values["/slack-agent/model-backend"] = "sim"
+    d._model_backend_cache["value"] = None
+    body = __import__("json").loads(d.handler(_event("GET", "/stats"), None)["body"])
+    assert body["modelBackend"] == "sim"
+    assert body["simMode"] is True
+
+
 def test_audit_requires_events(dashboard, env):
     _make(env)
     resp = dashboard.handler(_event("GET", "/audit"), None)
@@ -153,3 +174,12 @@ def test_kill_switch_get_and_set(dashboard, env):
     resp = dashboard.handler(_event("POST", "/admin/kill", body={"kill": True}), None)
     assert __import__("json").loads(resp["body"])["killSwitch"] is True
     assert __import__("json").loads(dashboard.handler(_event("GET", "/admin/kill"), None)["body"])["killSwitch"] is True
+
+
+def test_kill_switch_reports_model_backend(dashboard, env):
+    from dashboard_api import dashboard as d
+    d.ssm.values["/slack-agent/model-backend"] = "sim"
+    d._model_backend_cache["value"] = None
+    body = __import__("json").loads(d.handler(_event("GET", "/admin/kill"), None)["body"])
+    assert body["modelBackend"] == "sim"
+    assert body["simMode"] is True

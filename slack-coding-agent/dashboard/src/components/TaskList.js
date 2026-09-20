@@ -35,6 +35,24 @@ function StatusBadge({ status }) {
   );
 }
 
+function SimBadge({ task }) {
+  if (task.sim) {
+    return (
+      <span className="sim-badge" title={`Ran with SIM backend${task.model ? ` (${task.model})` : ''}`}>
+        SIM
+      </span>
+    );
+  }
+  if (task.model && task.model !== 'bedrock') {
+    return (
+      <span className="model-badge" title={`Model backend: ${task.model}`}>
+        {task.model}
+      </span>
+    );
+  }
+  return null;
+}
+
 // ─── Duration formatter ───────────────────────────────────────────────────────
 
 function formatDuration(ms) {
@@ -282,6 +300,7 @@ export default function TaskList({ onTaskClick, initialStatusFilter }) {
                 </td>
                 <td>
                   <StatusBadge status={task.status} />
+                  <SimBadge task={task} />
                 </td>
                 <td className="task-user">{task.username || task.user}</td>
                 <td className="task-date">

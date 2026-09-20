@@ -11,7 +11,8 @@
     "cdk": "cdk",
     "synth": "cdk synth",
     "deploy": "cdk deploy --all --require-approval never",
-    "destroy": "cdk destroy --all"
+    "destroy": "cdk destroy --all",
+    "build:spa": "cd ../dashboard && npm ci --no-audit --no-fund && REACT_APP_SAME_ORIGIN=true npm run build && rm -rf ../infrastructure/lambda/dashboard_api/spa && mkdir -p ../infrastructure/lambda/dashboard_api/spa && cp -R build/. ../infrastructure/lambda/dashboard_api/spa/"
   },
   "devDependencies": {
     "aws-cdk": "2.1142.0",

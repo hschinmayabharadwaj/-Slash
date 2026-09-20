@@ -201,3 +201,124 @@ def test_preflight_reports_missing_config():
     sandbox = FargateSandbox(FargateConfig(bucket="", cluster="", task_definition="", region="us-east-1"))
     problems = sandbox.preflight(["img"])
     assert problems, "preflight should flag empty config"
+
+
+def test_preflight_requires_api_key_for_anthropic(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = FargateConfig(bucket="b", cluster="c", task_definition="t", model_backend="anthropic")
+    problems = FargateSandbox(cfg).preflight(["img"])
+    assert any("ANTHROPIC_API_KEY" in p for p in problems)
+
+
+def test_implement_mode_overrides_cpu(tmp_path, repo, io_dir):
+    ecs = FakeECS(describe_pattern=["RUNNING", "STOPPED"])
+    sandbox = make_sandbox(tmp_path, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    sandbox.run_agent(
+        mode="implement", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None,
+    )
+    overrides = ecs.last_run_kwargs["overrides"]
+    assert overrides["cpu"] == "1024"
+    cmd = overrides["containerOverrides"][0]["command"]
+    assert cmd[3:] == ["agent", "implement"]
+
+
+def test_plan_mode_overrides_cpu(tmp_path, repo, io_dir):
+    ecs = FakeECS(describe_pattern=["RUNNING", "STOPPED"])
+    sandbox = make_sandbox(tmp_path, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    sandbox.run_agent(mode="plan", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None)
+    assert ecs.last_run_kwargs["overrides"]["cpu"] == "512"
+
+
+def test_anthropic_backend_injects_key_and_disables_bedrock(tmp_path, repo, io_dir, monkeypatch):
+    ecs = FakeECS(describe_pattern=["RUNNING", "STOPPED"])
+    cfg = FargateConfig(
+        bucket="sandbox-bucket", cluster="sandbox-cluster", task_definition="sandbox-taskdef",
+        container_name="sandbox", subnet_ids=["subnet-1"], security_group_ids=["sg-1"],
+        region="us-east-1", poll_interval=0.01, model_backend="anthropic",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-abc123")
+    sandbox = FargateSandbox(cfg, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    sandbox.run_agent(mode="plan", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None)
+    env = {e["name"]: e["value"] for e in ecs.last_run_kwargs["overrides"]["containerOverrides"][0]["environment"]}
+    assert env["MODEL_BACKEND"] == "anthropic"
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "0"
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-abc123"
+
+
+def test_sim_backend_no_key_required(tmp_path, repo, io_dir, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    ecs = FakeECS(describe_pattern=["RUNNING", "STOPPED"])
+    cfg = FargateConfig(
+        bucket="sandbox-bucket", cluster="sandbox-cluster", task_definition="sandbox-taskdef",
+        container_name="sandbox", subnet_ids=["subnet-1"], security_group_ids=["sg-1"],
+        region="us-east-1", poll_interval=0.01, model_backend="sim",
+    )
+    sandbox = FargateSandbox(cfg, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    sandbox.run_agent(mode="plan", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None)
+    env = {e["name"]: e["value"] for e in ecs.last_run_kwargs["overrides"]["containerOverrides"][0]["environment"]}
+    assert env["MODEL_BACKEND"] == "sim"
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+
+
+class _GatedECS(FakeECS):
+    """FakeECS with a separate pool of pre-existing sandbox tasks (for the gate).
+
+    ``self.other`` holds arns of tasks that are NOT the one launched by the test;
+    the gate counts those. The launched task's lifecycle rides the normal
+    pattern/stop mechanism from FakeECS.
+    """
+
+    def __init__(self, running_count=0, describe_pattern=None):
+        super().__init__(describe_pattern=describe_pattern or ["RUNNING", "STOPPED"])
+        self.other = {
+            f"arn:aws:ecs:us-east-1:123456789012:task/cluster/t{i}"
+            for i in range(running_count)
+        }
+
+    def list_tasks(self, *, cluster, family=None):
+        return {"taskArns": sorted(self.other)}
+
+    def describe_tasks(self, *, cluster, tasks):
+        if tasks and tasks[0] in self.other:
+            return {"tasks": [{"taskArn": a, "lastStatus": "RUNNING"} for a in self.other]}
+        return super().describe_tasks(cluster=cluster, tasks=tasks)
+
+    def describe_task_definition(self, **kwargs):
+        return {"taskDefinition": {"cpu": "1024"}}
+
+
+def test_gate_skipped_when_list_tasks_missing(tmp_path, repo, io_dir):
+    # Plain FakeECS has no list_tasks → the gate must pass through
+    ecs = FakeECS(describe_pattern=["RUNNING", "STOPPED"])
+    sandbox = make_sandbox(tmp_path, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    result = sandbox.run_agent(mode="plan", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None)
+    assert result.returncode == 0
+
+
+def test_gate_allows_launch_under_budget(tmp_path, repo, io_dir):
+    ecs = _GatedECS(running_count=1)  # baseline 1.0 + one running 1.0 + requested 0.5 ≤ 3.0
+    sandbox = make_sandbox(tmp_path, ecs=ecs, s3=FakeS3())
+    (io_dir / "input.json").write_text(json.dumps({"task": "x"}))
+    result = sandbox.run_agent(mode="plan", repo_dir=repo, io_dir=io_dir, image="img", timeout_s=30, api_key=None)
+    assert result.returncode == 0
+
+
+def test_gate_raises_when_over_budget(tmp_path, repo, io_dir):
+    # baseline 1.0 + 2 running (2.0) + requested 0.5 = 3.5 > 3.0 and running=2 ≥ max 2
+    ecs = _GatedECS(running_count=2)
+    cfg = FargateConfig(
+        bucket="sandbox-bucket", cluster="sandbox-cluster", task_definition="sandbox-taskdef",
+        container_name="sandbox", subnet_ids=["subnet-1"], security_group_ids=["sg-1"],
+        region="us-east-1", poll_interval=0.01, gate_wait_max=0.05,
+    )
+    sandbox = FargateSandbox(cfg, ecs=ecs, s3=FakeS3())
+    with pytest.raises(RuntimeError, match="vCPU budget"):
+        sandbox._run_task(
+            key_prefix="sandbox/abc", command=["agent"], image="img",
+            timeout_s=30, pull_io_back=False, cpu=512,
+        )

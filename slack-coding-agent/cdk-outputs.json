@@ -1,0 +1,51 @@
+{
+  "SlackAgentNetwork": {
+    "ExportsOutputFnGetAttBotSG69605C34GroupIdD107A530": "sg-08bf5f9a10a9cfc2e",
+    "VpcId": "vpc-083b4b2398d66086a",
+    "ExportsOutputRefSlackAgentVpcIsolatedSubnet1SubnetAA6C8DF7D5E9B9E7": "subnet-06cd0564f96049094",
+    "ExportsOutputRefSlackAgentVpcPublicSubnet1SubnetA79C965937F739B7": "subnet-0fdf02ceba3fc46b3",
+    "ExportsOutputFnGetAttDbSG0BE6ACB3GroupIdE6F8FAFE": "sg-0fbcefc0a1cc5ad81",
+    "BotSecurityGroupId": "sg-08bf5f9a10a9cfc2e",
+    "ExportsOutputRefSlackAgentVpcPublicSubnet2SubnetFABF0BF23B124DAD": "subnet-04797dd5c769c21d6",
+    "ExportsOutputRefSlackAgentVpcIsolatedSubnet2Subnet1DEEB6DACCF9102C": "subnet-0f7643fb7cd69ca44",
+    "ExportsOutputRefSlackAgentVpcDFEDDF8CABA0894C": "vpc-083b4b2398d66086a"
+  },
+  "SlackAgentMessaging": {
+    "EventBusName": "SlackAgentBus",
+    "NotificationsTopicArn": "arn:aws:sns:us-east-2:958357664308:slack-agent-notifications",
+    "ExportsOutputFnGetAttTaskQueueF51BE51CQueueName6794CE84": "slack-agent-task-queue",
+    "ExportsOutputRefTaskAlerts2CE9253289198BDD": "arn:aws:sns:us-east-2:958357664308:slack-agent-alerts",
+    "ExportsOutputFnGetAttSlackAgentBus6F16FD7DArn526F1B68": "arn:aws:events:us-east-2:958357664308:event-bus/SlackAgentBus",
+    "ExportsOutputFnGetAttTaskDLQ42A398D8QueueName43E652CF": "slack-agent-task-dlq",
+    "EventBusArn": "arn:aws:events:us-east-2:958357664308:event-bus/SlackAgentBus",
+    "ExportsOutputRefSlackAgentBus6F16FD7D56D85A4A": "SlackAgentBus",
+    "AlertsTopicArn": "arn:aws:sns:us-east-2:958357664308:slack-agent-alerts",
+    "TaskDlqUrl": "https://sqs.us-east-2.amazonaws.com/958357664308/slack-agent-task-dlq",
+    "ExportsOutputRefTaskQueueF51BE51CA692F10C": "https://sqs.us-east-2.amazonaws.com/958357664308/slack-agent-task-queue",
+    "TaskQueueUrl": "https://sqs.us-east-2.amazonaws.com/958357664308/slack-agent-task-queue",
+    "ExportsOutputRefAgentNotificationsC48DCD98E66F650C": "arn:aws:sns:us-east-2:958357664308:slack-agent-notifications",
+    "ExportsOutputFnGetAttTaskQueueF51BE51CArnEED53A76": "arn:aws:sqs:us-east-2:958357664308:slack-agent-task-queue"
+  },
+  "SlackAgentDatabase": {
+    "ExportsOutputRefAuroraCredentials20EDD625319D68A2": "arn:aws:secretsmanager:us-east-2:958357664308:secret:slack-agent/aurora-credentials-aexPtZ",
+    "TaskTableName": "TaskState",
+    "ExportsOutputFnGetAttAuditEventsTable0723963EArn8F8FCDEF": "arn:aws:dynamodb:us-east-2:958357664308:table/slackagent-audit-events",
+    "AuroraSecretArn": "arn:aws:secretsmanager:us-east-2:958357664308:secret:slack-agent/aurora-credentials-aexPtZ",
+    "ExportsOutputRefAuditEventsTable0723963E9A3B485E": "slackagent-audit-events",
+    "AuditTableName": "slackagent-audit-events",
+    "ExportsOutputRefTaskStateTableE375E31D863E23DB": "TaskState",
+    "ExportsOutputFnGetAttTaskStateTableE375E31DArnD4CEC2C8": "arn:aws:dynamodb:us-east-2:958357664308:table/TaskState",
+    "ExportsOutputFnGetAttArtifactsBucket2AAC5544ArnD57FAE19": "arn:aws:s3:::slack-agent-artifacts-958357664308-us-east-2",
+    "AuroraEndpoint": "slack-agent-aurora.cluster-ch2m6uo4cc4r.us-east-2.rds.amazonaws.com",
+    "ArtifactsBucketName": "slack-agent-artifacts-958357664308-us-east-2",
+    "ExportsOutputRefArtifactsBucket2AAC55442DB5E6C9": "slack-agent-artifacts-958357664308-us-east-2"
+  },
+  "SlackAgentApi": {
+    "WebhookUrl": "https://2q1q944wb7.execute-api.us-east-2.amazonaws.com/prod/webhook",
+    "ApiUrl": "https://2q1q944wb7.execute-api.us-east-2.amazonaws.com/prod/",
+    "SlackAgentApiEndpoint3D418283": "https://2q1q944wb7.execute-api.us-east-2.amazonaws.com/prod/",
+    "StateMachineArn": "arn:aws:states:us-east-2:958357664308:stateMachine:SlackAgentTaskWorkflow",
+    "ExportsOutputRefTaskWorkflowBE4E456A9DF4FAF6": "arn:aws:states:us-east-2:958357664308:stateMachine:SlackAgentTaskWorkflow",
+    "DashboardUrl": "https://m8emlr30vk.execute-api.us-east-2.amazonaws.com/"
+  }
+}

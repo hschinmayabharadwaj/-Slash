@@ -27,21 +27,27 @@ RUN useradd -m -u 1000 -s /bin/bash sandbox
 # Install the wheel-less code under /opt so `python -m slackagent` works
 COPY src/ /opt/slackagent/
 
-# Install Python dependencies for the S3 bridge + common dev tasks
+# Install the project runtime dependencies required by the bot itself.
+# The Slack app imports `slack_bolt`, and the agent code expects the Gemini SDK
+# and the JWT crypto stack to be present in the container at runtime.
 RUN pip install --no-cache-dir \
     boto3 \
     pyyaml \
-    PyJWT \
+    slack-bolt>=1.18.0 \
+    google-generativeai>=0.3.0 \
+    PyJWT>=2.8.0 \
     cryptography>=41.0.0 \
-    requests \
+    requests>=2.31.0 \
+    python-dotenv>=1.0.0 \
     pytest \
     black \
     ruff \
     mypy \
     pylint
 
-# Set up working directory
+# Set up working directory (owned by the non-root user so the checkout can be extracted)
 WORKDIR /workspace
+RUN mkdir -p /workspace /io && chown sandbox:sandbox /workspace /io
 
 ENV PYTHONPATH=/opt/slackagent
 ENV CLAUDE_CODE_USE_BEDROCK=1

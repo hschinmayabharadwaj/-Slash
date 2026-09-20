@@ -269,6 +269,15 @@ export default function TaskDetail({ taskId, onBack }) {
           <div className="detail-title">
             <span className="detail-task-id">Task #{task.shortId}</span>
             <StatusBadge status={task.status} />
+            {task.sim ? (
+              <span className="sim-badge" title={`Ran with SIM backend${task.model ? ` (${task.model})` : ''}`}>
+                SIM
+              </span>
+            ) : task.model && task.model !== 'bedrock' ? (
+              <span className="model-badge" title={`Model backend: ${task.model}`}>
+                {task.model}
+              </span>
+            ) : null}
           </div>
           {task.prUrl && (
             <a

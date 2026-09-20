@@ -8,7 +8,6 @@ import { ComputeStack } from '../lib/compute-stack';
 import { ApiStack } from '../lib/api-stack';
 import { MonitoringStack } from '../lib/monitoring-stack';
 import { AIStack } from '../lib/ai-stack';
-import { StaticSiteStack } from '../lib/static-site-stack';
 
 const app = new cdk.App();
 
@@ -103,11 +102,9 @@ const aiStack = new AIStack(app, 'SlackAgentAI', {
 aiStack.addDependency(networkStack);
 aiStack.addDependency(databaseStack);
 
-// ── Layer 7b: Static demo dashboard (us-east-2 S3 + CloudFront) ──
-const staticSiteStack = new StaticSiteStack(app, 'SlackAgentStaticSite', {
-  env,
-  description: 'Demo dashboard SPA (S3 origin + CloudFront) — us-east-2 only',
-  tags: { Project: 'slack-coding-agent', Layer: 'Frontend' },
-});
+// ── Dashboards ────────────────────────────────────────────────
+// The dashboard SPA + API is served in-process by the site Lambda behind the
+// HTTP API in SlackAgentApi (https). No CloudFront / S3 website / App Runner /
+// dedicated Fargate service. See `ApiStack.DashboardUrl` output.
 
 app.synth();

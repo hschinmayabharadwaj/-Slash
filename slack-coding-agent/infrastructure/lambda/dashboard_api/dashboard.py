@@ -29,8 +29,34 @@ TABLE_NAME = os.environ.get("SLACKAGENT_TASKS_TABLE", os.environ.get("DYNAMODB_T
 AUDIT_TABLE = os.environ.get("SLACKAGENT_AUDIT_TABLE", os.environ.get("AUDIT_TABLE", "slackagent-audit-events"))
 QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
 KILL_SWITCH_PARAM = os.environ.get("KILL_SWITCH_PARAM", "/slack-agent/kill-switch")
+MODEL_BACKEND_PARAM = os.environ.get("MODEL_BACKEND_PARAM", "/slack-agent/model-backend")
+DEFAULT_MODEL_BACKEND = os.environ.get("MODEL_BACKEND", "bedrock")
 
 CANCELLABLE = {"READY", "RUNNING", "AWAITING_APPROVAL", "AWAITING_IMPL_APPROVAL"}
+
+_model_backend_cache = {"value": None}
+
+
+def get_model_backend():
+    """Resolve the configured model backend (SSM first, then env, then bedrock).
+
+    sim       → deterministic fake agent (no LLM)
+    anthropic → Claude direct API (key in Secrets Manager)
+    bedrock   → Claude Code authenticated via the Bedrock task role
+    """
+    if _model_backend_cache["value"] is not None:
+        return _model_backend_cache["value"]
+    value = ""
+    try:
+        value = ssm.get_parameter(Name=MODEL_BACKEND_PARAM, WithDecryption=False)["Parameter"]["Value"].strip().lower()
+    except Exception:
+        pass
+    if value not in ("sim", "anthropic", "bedrock"):
+        value = os.environ.get("MODEL_BACKEND", DEFAULT_MODEL_BACKEND).strip().lower()
+    if value not in ("sim", "anthropic", "bedrock"):
+        value = "bedrock"
+    _model_backend_cache["value"] = value
+    return value
 
 
 def _now():
@@ -66,7 +92,16 @@ def _write_audit(task_id, action, detail, task=None):
 
 
 def _json(status_code, body):
-    return {"statusCode": status_code, "headers": {"Content-Type": "application/json"}, "body": json.dumps(body, default=str)}
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+        },
+        "body": json.dumps(body, default=str),
+    }
 
 
 def list_tasks():
@@ -119,6 +154,8 @@ def create_task(body):
         "baseBranch": base_branch,
         "createdAt": now,
         "source": "dashboard",
+        "model": get_model_backend(),
+        "modelBackend": get_model_backend(),
     }
     if branch:
         item["branch"] = branch
@@ -172,7 +209,13 @@ def get_stats():
     counts = {}
     for item in items:
         counts[item.get("status", "UNKNOWN")] = counts.get(item.get("status", "UNKNOWN"), 0) + 1
-    return _json(200, {"counts": counts, "total": len(items)})
+    backend = get_model_backend()
+    return _json(200, {
+        "counts": counts,
+        "total": len(items),
+        "modelBackend": backend,
+        "simMode": backend == "sim",
+    })
 
 
 def get_metrics():
@@ -181,11 +224,14 @@ def get_metrics():
     for item in items:
         status = item.get("status", "UNKNOWN")
         by_status.setdefault(status, []).append(item)
+    backend = get_model_backend()
     summary = {
         "updatedAt": _now(),
         "counts": {k: len(v) for k, v in by_status.items()},
         "total": len(items),
         "inFlight": len(by_status.get("RUNNING", [])) + len(by_status.get("AWAITING_APPROVAL", [])) + len(by_status.get("AWAITING_IMPL_APPROVAL", [])),
+        "modelBackend": backend,
+        "simMode": backend == "sim",
     }
     return _json(200, summary)
 
@@ -202,7 +248,8 @@ def get_kill():
         value = ssm.get_parameter(Name=KILL_SWITCH_PARAM, WithDecryption=False)["Parameter"]["Value"]
     except Exception:
         value = "0"
-    return _json(200, {"killSwitch": value == "1", "value": value})
+    backend = get_model_backend()
+    return _json(200, {"killSwitch": value == "1", "value": value, "modelBackend": backend, "simMode": backend == "sim"})
 
 
 def set_kill(body):
@@ -210,7 +257,8 @@ def set_kill(body):
     value = "1" if kill else "0"
     ssm.put_parameter(Name=KILL_SWITCH_PARAM, Value=value, Type="String", Overwrite=True)
     _write_audit("", f"kill_switch_{'on' if kill else 'off'}", {"value": value})
-    return _json(200, {"killSwitch": kill, "value": value})
+    backend = get_model_backend()
+    return _json(200, {"killSwitch": kill, "value": value, "modelBackend": backend, "simMode": backend == "sim"})
 
 
 class ConditionalFailure(Exception):

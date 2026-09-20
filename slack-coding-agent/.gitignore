@@ -37,6 +37,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Generated SPA bundle copied into the site Lambda asset (built by build:spa)
+infrastructure/lambda/dashboard_api/spa/
+
 # AWS CDK
 .cdk.staging/
 cdk.out/

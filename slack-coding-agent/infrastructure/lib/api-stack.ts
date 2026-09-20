@@ -11,7 +11,10 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as path from 'path';
+import * as fs from 'fs';
 import { Construct } from 'constructs';
 
 export interface ApiStackProps extends cdk.StackProps {
@@ -30,6 +33,8 @@ export class ApiStack extends cdk.Stack {
   public readonly taskProcessorFn: lambda.Function;
   public readonly webhookHandlerFn: lambda.Function;
   public readonly dashboardApiFn: lambda.Function;
+  public readonly siteFn: lambda.Function;
+  public readonly httpApi: apigatewayv2.HttpApi;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -46,6 +51,8 @@ export class ApiStack extends cdk.Stack {
       ALERTS_TOPIC_ARN: props.alertsTopic.topicArn,
       S3_BUCKET: props.artifactsBucket.bucketName,
       KILL_SWITCH_PARAM: '/slack-agent/kill-switch',
+      MODEL_BACKEND_PARAM: '/slack-agent/model-backend',
+      MODEL_BACKEND: process.env.MODEL_BACKEND || 'bedrock',
       POWERTOOLS_SERVICE_NAME: 'slack-coding-agent',
       LOG_LEVEL: 'INFO',
     };
@@ -91,6 +98,7 @@ export class ApiStack extends cdk.Stack {
         actions: ['ssm:PutParameter', 'ssm:GetParameter'],
         resources: [
           `arn:aws:ssm:${this.region}:${this.account}:parameter/slack-agent/kill-switch`,
+          `arn:aws:ssm:${this.region}:${this.account}:parameter/slack-agent/model-backend`,
         ],
       }));
     };
@@ -104,6 +112,16 @@ export class ApiStack extends cdk.Stack {
       type: 'String',
       value: '0',
       description: 'Slack Coding Agent kill switch: "1" halts the worker',
+    });
+
+    // Model backend switch: sim | anthropic | bedrock. The worker and the
+    // dashboard read this parameter at runtime; MODEL_BACKEND env is a fallback.
+    // Values are validated at runtime (invalid → bedrock), so no CFN constraint.
+    const modelBackendParam = new ssm.CfnParameter(this, 'ModelBackendParam', {
+      name: '/slack-agent/model-backend',
+      type: 'String',
+      value: process.env.MODEL_BACKEND || 'bedrock',
+      description: 'Model backend: sim (no LLM), anthropic (API key via Secrets Manager), bedrock (task-role auth)',
     });
 
     // ── Lambda: Task Processor (approve/reject) ───────────────
@@ -443,6 +461,46 @@ export class ApiStack extends cdk.Stack {
       new apigateway.LambdaIntegration(this.dashboardApiFn, { proxy: true })
     );
 
+    // ── Site Lambda + HTTP API: dashboard served in-process over HTTPS ──
+    // No Fargate service, App Runner or CloudFront. The HTTP API proxy routes
+    // every request to one Lambda that serves the built React SPA (bundled at
+    // `../lambda/dashboard_api/spa`) and the dashboard API in-process.
+    const spaDir = path.join(__dirname, '../lambda/dashboard_api/spa');
+    if (!fs.existsSync(path.join(spaDir, 'index.html'))) {
+      throw new Error(
+        'Dashboard SPA is not built. Run: (cd dashboard && npm ci && npm run build) ' +
+        '&& (cd infrastructure && npm run build:spa) before cdk synth/deploy.'
+      );
+    }
+
+    this.siteFn = new lambda.Function(this, 'DashboardSite', {
+      functionName: 'slack-agent-dashboard-site',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'dashboard_site.handler',
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, '../lambda/dashboard_api')
+      ),
+      memorySize: 512,
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        ...lambdaEnv,
+        REST_API_URL: this.api.url, // forward approve/reject to the REST API
+      },
+      role: dashboardRole,
+      tracing: lambda.Tracing.ACTIVE,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+    });
+
+    this.httpApi = new apigatewayv2.HttpApi(this, 'SlackAgentHttpApi', {
+      apiName: 'slack-agent-dashboard',
+      description: 'HTTPS dashboard proxy (SPA + dashboard API) for Slack Coding Agent',
+    });
+    this.httpApi.addRoutes({
+      path: '/{proxy+}',
+      methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST, apigatewayv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration('DashboardSiteIntegration', this.siteFn),
+    });
+
     // ── Outputs ───────────────────────────────────────────────
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: this.api.url,
@@ -459,6 +517,12 @@ export class ApiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'StateMachineArn', {
       value: this.taskWorkflow.stateMachineArn,
       exportName: 'SlackAgentStateMachineArn',
+    });
+
+    new cdk.CfnOutput(this, 'DashboardUrl', {
+      value: this.httpApi.url ?? '',
+      exportName: 'SlackAgentDashboardUrl',
+      description: 'HTTPS dashboard URL (HTTP API + site Lambda)',
     });
   }
 }

@@ -52,7 +52,16 @@ def _write_audit(task_id, action, detail, status):
 
 
 def _json(status_code, body):
-    return {"statusCode": status_code, "headers": {"Content-Type": "application/json"}, "body": json.dumps(body, default=str)}
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+        },
+        "body": json.dumps(body, default=str),
+    }
 
 
 def _route_to_worker(task_id, message):
