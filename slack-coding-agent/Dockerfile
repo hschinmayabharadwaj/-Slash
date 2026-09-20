@@ -7,11 +7,18 @@
 
 FROM python:3.11-slim
 
-# Install git and basic tools
+# Install git, basic tools, and build dependencies for cryptography
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    python3-dev \
+    cargo \
+    rustc \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for execution
@@ -25,6 +32,8 @@ RUN pip install --no-cache-dir \
     boto3 \
     pyyaml \
     PyJWT \
+    cryptography>=41.0.0 \
+    requests \
     pytest \
     black \
     ruff \

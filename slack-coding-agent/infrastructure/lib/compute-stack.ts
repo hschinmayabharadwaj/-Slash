@@ -239,8 +239,8 @@ export class ComputeStack extends cdk.Stack {
 
     const sandboxTaskDef = new ecs.FargateTaskDefinition(this, 'SandboxTaskDef', {
       family: 'slack-agent-sandbox',
-      cpu: 2048,        // 2 vCPU — headroom for claude-code + git + checks
-      memoryLimitMiB: 8192,
+      cpu: 512,         // 0.5 vCPU — new-account Fargate vCPU quota is 4
+      memoryLimitMiB: 2048,
       taskRole: sandboxTaskRole,
       executionRole: sandboxExecutionRole,
     });
@@ -258,8 +258,8 @@ export class ComputeStack extends cdk.Stack {
 
     const workerTaskDef = new ecs.FargateTaskDefinition(this, 'WorkerTaskDef', {
       family: 'slack-agent-worker',
-      cpu: 2048,   // 2 vCPU (runs Docker-in-Docker sandbox)
-      memoryLimitMiB: 4096,
+      cpu: 512,    // 0.5 vCPU — fits the 4 vCPU new-account quota
+      memoryLimitMiB: 2048,
       taskRole,
     });
 

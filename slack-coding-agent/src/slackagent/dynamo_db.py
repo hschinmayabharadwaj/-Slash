@@ -323,8 +323,6 @@ class DynamoDBStore:
         self._table().update_item(
             Key={"taskId": str(task_id), "timestamp": "now"},
             UpdateExpression="REMOVE worker_id",
-            ExpressionAttributeNames={},
-            ExpressionAttributeValues={},
             ConditionExpression="attribute_exists(worker_id)",
         )
 
