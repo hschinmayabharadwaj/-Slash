@@ -1,0 +1,26 @@
+{
+  "name": "slack-coding-agent-infra",
+  "version": "1.0.0",
+  "description": "AWS CDK infrastructure for Slack Coding Agent",
+  "bin": {
+    "infra": "bin/infra.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all --require-approval never",
+    "destroy": "cdk destroy --all"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1142.0",
+    "typescript": "~5.2.0",
+    "@types/node": "20.5.1",
+    "ts-node": "^10.9.1"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.270.0",
+    "constructs": "^10.0.0"
+  }
+}

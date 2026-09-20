@@ -227,6 +227,8 @@ class Worker:
         """Validate and normalize plan JSON."""
         if not isinstance(raw, dict):
             raise TaskAbort("Couldn't produce a clear plan. Try rephrasing with more detail.")
+        if "feasible" not in raw:
+            raise TaskAbort("Plan missing required field 'feasible'. Try rephrasing with more detail.")
         
         risk = raw.get("risk") if raw.get("risk") in ("low", "medium", "high") else "medium"
         

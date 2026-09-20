@@ -270,7 +270,7 @@ def _validate_config(config: Config) -> None:
         raise ValueError(f"GitHub private key file not found: {config.github.private_key_path}")
 
     # Validate Gemini API key (basic check - not empty)
-    if not config.gemini.api_key or len(config.gemini.api_key) < 20:
+    if not config.gemini.api_key or len(config.gemini.api_key) < 10:
         raise ValueError("Gemini API key appears to be invalid")
 
     # Validate token budgets

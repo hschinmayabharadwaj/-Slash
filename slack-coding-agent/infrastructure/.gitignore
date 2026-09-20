@@ -1,0 +1,9 @@
+# TypeScript compile output
+dist/
+
+# Dependencies
+node_modules/
+
+# CDK
+.cdk.staging/
+cdk.out/

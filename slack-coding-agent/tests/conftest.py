@@ -1,9 +1,14 @@
 """Pytest fixtures for testing."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "lambda"))
+
 import json
 import subprocess
 import tempfile
-from pathlib import Path
 from typing import Any, Dict
 
 import pytest
