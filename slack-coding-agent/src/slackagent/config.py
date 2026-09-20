@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Optional
 
 import yaml  # type: ignore[reportMissingModuleSource]
 
@@ -53,6 +53,9 @@ class SecurityConfig:
     network_mode: str = "none"
     scan_secrets: bool = True
     require_approval: bool = True
+    kill_switch_file: str = "./data/KILL_SWITCH"  # Kill switch file path
+    max_files: int = 20  # Max files changed per task
+    max_changed_lines: int = 500  # Max lines changed per task
 
 
 @dataclass
@@ -64,6 +67,9 @@ class AgentConfig:
     planning_budget: int = 20000
     implementation_budget: int = 80000
     system_prompt_suffix: str = ""
+    max_turns: int = 10  # Maximum conversation turns
+    max_budget_usd: float = 0.50  # Cost cap per task
+    check_timeout_s: int = 600  # Timeout for checks
 
 
 @dataclass
@@ -102,6 +108,19 @@ class LoggingConfig:
 
 
 @dataclass
+class RepoConfig:
+    """Per-repository configuration."""
+    
+    lint_command: Optional[str] = None  # Custom lint command
+    test_command: Optional[str] = None  # Custom test command
+    extra_deny_paths: List[str] = field(default_factory=list)  # Additional protected paths
+    default_branch: str = "main"  # Default branch for PRs
+    enabled: bool = True  # Whether bot is enabled for this repo
+    max_files_override: Optional[int] = None  # Override global max_files
+    max_lines_override: Optional[int] = None  # Override global max_lines
+
+
+@dataclass
 class Config:
     """Full application configuration."""
 
@@ -114,6 +133,30 @@ class Config:
     docker: DockerConfig = field(default_factory=DockerConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    repos: Dict[str, RepoConfig] = field(default_factory=dict)  # Per-repo settings
+    
+    def repo(self, repo_full_name: str) -> RepoConfig:
+        """Get configuration for a specific repository.
+        
+        Args:
+            repo_full_name: Repository in format "owner/name"
+            
+        Returns:
+            RepoConfig for the repository (or default)
+        """
+        return self.repos.get(repo_full_name, RepoConfig())
+    
+    def deny_for(self, repo_full_name: str) -> List[str]:
+        """Get deny patterns for a repository.
+        
+        Args:
+            repo_full_name: Repository in format "owner/name"
+            
+        Returns:
+            Combined list of global and repo-specific deny patterns
+        """
+        repo_cfg = self.repo(repo_full_name)
+        return self.security.protected_paths + repo_cfg.extra_deny_paths
 
 
 def _expand_env_vars(value: Any) -> Any:
@@ -176,6 +219,13 @@ def load_config(config_path: str = "config.yaml") -> Config:
         docker_config = DockerConfig(**raw_config.get("docker", {}))
         worker_config = WorkerConfig(**raw_config.get("worker", {}))
         logging_config = LoggingConfig(**raw_config.get("logging", {}))
+        
+        # Per-repo configurations
+        repos_config = {}
+        if "repos" in raw_config and isinstance(raw_config["repos"], dict):
+            for repo_name, repo_data in raw_config["repos"].items():
+                if isinstance(repo_data, dict):
+                    repos_config[repo_name] = RepoConfig(**repo_data)
 
         config = Config(
             slack=slack_config,
@@ -187,6 +237,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
             docker=docker_config,
             worker=worker_config,
             logging=logging_config,
+            repos=repos_config,
         )
 
         # Validate configuration
