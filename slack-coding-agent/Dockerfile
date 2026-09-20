@@ -23,6 +23,8 @@ COPY src/ /opt/slackagent/
 # Install Python dependencies for the S3 bridge + common dev tasks
 RUN pip install --no-cache-dir \
     boto3 \
+    pyyaml \
+    PyJWT \
     pytest \
     black \
     ruff \

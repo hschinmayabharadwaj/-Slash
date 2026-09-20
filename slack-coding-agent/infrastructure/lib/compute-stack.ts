@@ -29,6 +29,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly botRepository: ecr.Repository;
   public readonly sandboxRepository: ecr.Repository;
   public readonly dashboardRepository: ecr.Repository;
+  public dashboardService: ecs.FargateService | undefined;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -402,6 +403,46 @@ export class ComputeStack extends cdk.Stack {
     //   ).attrAutoScalingConfigurationArn,
     // });
 
+    // ── Fargate Service: Dashboard (nginx SPA) ────────────────
+    // App Runner and CloudFront are blocked until this account is verified,
+    // so the React dashboard is served by a small public Fargate task
+    // (0.25 vCPU / 512 MB) on port 80. All us-east-2.
+    const dashboardSg = new ec2.SecurityGroup(this, 'DashboardSg', {
+      vpc: props.vpc,
+      securityGroupName: 'slack-agent-dashboard-sg',
+      description: 'Public access to the demo dashboard',
+      allowAllOutbound: true,
+    });
+    dashboardSg.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(80),
+      'Allow HTTP on dashboard'
+    );
+
+    const dashboardTaskDef = new ecs.FargateTaskDefinition(this, 'DashboardTaskDef', {
+      family: 'slack-agent-dashboard',
+      cpu: 256,
+      memoryLimitMiB: 512,
+    });
+
+    dashboardTaskDef.addContainer('dashboard', {
+      containerName: 'dashboard',
+      image: ecs.ContainerImage.fromEcrRepository(this.dashboardRepository, 'latest'),
+      portMappings: [{ containerPort: 80 }],
+    });
+
+    const dashboardService = new ecs.FargateService(this, 'DashboardService', {
+      serviceName: 'slack-agent-dashboard',
+      cluster: this.cluster,
+      taskDefinition: dashboardTaskDef,
+      desiredCount: 1,
+      assignPublicIp: true,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      securityGroups: [dashboardSg],
+      minHealthyPercent: 0,
+    });
+    this.dashboardService = dashboardService;
+
     // ── EC2 Dev Instance ──────────────────────────────────────
     const devRole = new iam.Role(this, 'DevInstanceRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
@@ -477,6 +518,12 @@ export class ComputeStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DevInstanceId', {
       value: devInstance.instanceId,
       exportName: 'SlackAgentDevInstanceId',
+    });
+
+    new cdk.CfnOutput(this, 'DashboardTaskArn', {
+      value: dashboardService.cluster.clusterName,
+      exportName: 'SlackAgentDashboardCluster',
+      description: 'Run `aws ecs list-tasks --cluster <this> --service-name slack-agent-dashboard` for the public IP',
     });
   }
 }
