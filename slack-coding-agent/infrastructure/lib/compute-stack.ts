@@ -176,6 +176,10 @@ export class ComputeStack extends cdk.Stack {
       cpu: 512,   // 0.5 vCPU — hard budget: bot + 1 worker + 2 sandboxes ≤ 3.0 vCPU
       memoryLimitMiB: 1024,
       taskRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
     });
 
     botTaskDef.addContainer('bot', {
@@ -249,6 +253,10 @@ export class ComputeStack extends cdk.Stack {
       memoryLimitMiB: 2048,
       taskRole: sandboxTaskRole,
       executionRole: sandboxExecutionRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
     });
     const sandboxContainer = sandboxTaskDef.addContainer('sandbox', {
       containerName: 'sandbox',
@@ -267,6 +275,10 @@ export class ComputeStack extends cdk.Stack {
       cpu: 512,    // 0.5 vCPU — hard budget: bot + 1 worker + 2 sandboxes ≤ 3.0 vCPU
       memoryLimitMiB: 1024,
       taskRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
     });
 
     workerTaskDef.addContainer('worker', {
