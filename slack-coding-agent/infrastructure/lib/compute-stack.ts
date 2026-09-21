@@ -177,7 +177,7 @@ export class ComputeStack extends cdk.Stack {
       memoryLimitMiB: 1024,
       taskRole,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
@@ -254,7 +254,7 @@ export class ComputeStack extends cdk.Stack {
       taskRole: sandboxTaskRole,
       executionRole: sandboxExecutionRole,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
@@ -276,7 +276,7 @@ export class ComputeStack extends cdk.Stack {
       memoryLimitMiB: 1024,
       taskRole,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
