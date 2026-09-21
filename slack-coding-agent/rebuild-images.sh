@@ -22,7 +22,12 @@ header() { echo -e "${CYAN}━━━ $1 ━━━${NC}"; }
 # Configuration
 REGION="${AWS_REGION:-us-east-1}"
 AWS_ACCOUNT="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text 2>/dev/null)}"
-PLATFORM="linux/amd64"
+PLATFORM="linux/amd64"aws ecs describe-services \
+  --cluster SlackAgentCluster \
+  --region us-east-2 \
+  --services slack-agent-bot \
+  --query 'services[].{service:serviceName,status:status,desired:desiredCount,running:runningCount,pending:pendingCount}' \
+  --output json
 
 if [ -z "$AWS_ACCOUNT" ]; then
   error "Could not determine AWS account ID. Set AWS_ACCOUNT_ID or configure AWS CLI."

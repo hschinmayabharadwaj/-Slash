@@ -177,6 +177,70 @@ def _expand_env_vars(value: Any) -> Any:
         return value
 
 
+def _github_private_key_path() -> str:
+    """Return a usable private-key path for the GitHub App.
+
+    ECS Secrets Manager commonly injects the raw PEM contents via the
+    ``GITHUB_PRIVATE_KEY`` environment variable rather than a filesystem path.
+    In that case, we write the secret to a temp file so the rest of the app can
+    keep using the standard ``private_key_path`` configuration contract.
+    """
+    env_path = os.environ.get("GITHUB_PRIVATE_KEY_PATH", "").strip()
+    if env_path:
+        return env_path
+
+    raw_key = os.environ.get("GITHUB_PRIVATE_KEY", "").strip()
+    if not raw_key:
+        return ""
+
+    temp_dir = Path("/tmp")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_key = temp_dir / "slack-agent-github-private-key.pem"
+    temp_key.write_text(raw_key)
+    return str(temp_key)
+
+
+def _env_fallback_config() -> Dict[str, Any]:
+    """Build a config dict from environment variables for ECS/container deployments.
+
+    This supports the AWS Secrets Manager injection pattern used by Fargate, where
+    environment variables are populated but no local config.yaml file exists.
+    """
+    return {
+        "slack": {
+            "bot_token": os.environ.get("SLACK_BOT_TOKEN", ""),
+            "app_token": os.environ.get("SLACK_APP_TOKEN", ""),
+            "signing_secret": os.environ.get("SLACK_SIGNING_SECRET", ""),
+        },
+        "github": {
+            "app_id": os.environ.get("GITHUB_APP_ID", ""),
+            "private_key_path": _github_private_key_path(),
+            "installation_id": os.environ.get("GITHUB_INSTALLATION_ID", ""),
+            "default_owner": os.environ.get("GITHUB_DEFAULT_OWNER", ""),
+        },
+        "gemini": {
+            "api_key": os.environ.get("GEMINI_API_KEY", ""),
+        },
+    }
+
+
+def _has_all_required_env_sections(env_cfg: Dict[str, Any]) -> bool:
+    """Whether the env-based fallback contains all required values."""
+    section_requirements = {
+        "slack": ["bot_token", "app_token", "signing_secret"],
+        "github": ["app_id", "private_key_path", "installation_id"],
+        "gemini": ["api_key"],
+    }
+    for section, required_keys in section_requirements.items():
+        if section not in env_cfg:
+            return False
+        for key in required_keys:
+            value = env_cfg[section].get(key, "")
+            if not value or not str(value).strip():
+                return False
+    return True
+
+
 def load_config(config_path: str = "config.yaml") -> Config:
     """Load and validate configuration from YAML file.
 
@@ -192,10 +256,13 @@ def load_config(config_path: str = "config.yaml") -> Config:
     """
     path = Path(config_path)
     if not path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with open(path, "r") as f:
-        raw_config = yaml.safe_load(f)
+        env_cfg = _env_fallback_config()
+        if not _has_all_required_env_sections(env_cfg):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        raw_config = env_cfg
+    else:
+        with open(path, "r") as f:
+            raw_config = yaml.safe_load(f) or {}
 
     # Expand environment variables
     raw_config = _expand_env_vars(raw_config)
@@ -219,7 +286,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
         docker_config = DockerConfig(**raw_config.get("docker", {}))
         worker_config = WorkerConfig(**raw_config.get("worker", {}))
         logging_config = LoggingConfig(**raw_config.get("logging", {}))
-        
+
         # Per-repo configurations
         repos_config = {}
         if "repos" in raw_config and isinstance(raw_config["repos"], dict):

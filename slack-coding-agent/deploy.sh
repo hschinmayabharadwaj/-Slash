@@ -102,22 +102,27 @@ if [ "$SKIP_BUILD" = false ]; then
     docker login --username AWS --password-stdin "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
   success "ECR login successful"
 
+  # ECS Fargate task definitions in this project use Linux ARM64.
+  # Always build for that platform explicitly: a locally built image can carry
+  # incorrect architecture metadata when it is built on a different host.
+  # Build and push the image directly so ECR receives the required amd64
+  # manifest rather than a host-architecture-specific local image.
+  ECR_REGISTRY="$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+
   # Build bot image
   log "Building slack-coding-agent image..."
-  docker build -t slack-coding-agent:latest -f Dockerfile .
-  docker tag slack-coding-agent:latest "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-coding-agent:latest"
-  log "Pushing to ECR..."
-  docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-coding-agent:latest"
+  docker buildx build --platform linux/arm64 --push \
+    -t "$ECR_REGISTRY/slack-coding-agent:latest" -f Dockerfile .
   success "Bot image pushed"
 
   # Build sandbox image
   log "Building slack-agent-sandbox image..."
-  docker build -t slack-agent-sandbox:latest -f Dockerfile.sandbox . || {
+  docker buildx build --platform linux/arm64 --push \
+    -t "$ECR_REGISTRY/slack-agent-sandbox:latest" -f Dockerfile.sandbox . || {
     warn "Dockerfile.sandbox not found, using main Dockerfile"
-    docker tag slack-coding-agent:latest "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-agent-sandbox:latest"
+    docker buildx build --platform linux/arm64 --push \
+      -t "$ECR_REGISTRY/slack-agent-sandbox:latest" -f Dockerfile .
   }
-  docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-agent-sandbox:latest" 2>/dev/null || \
-    docker push "$AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/slack-coding-agent:latest"
   success "Sandbox image pushed"
 else
   warn "Skipping Docker build (--skip-build)"

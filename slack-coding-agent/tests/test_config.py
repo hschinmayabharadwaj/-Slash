@@ -74,6 +74,47 @@ def test_load_config_missing_file() -> None:
         load_config("nonexistent.yaml")
 
 
+def test_load_config_from_environment_when_file_missing(tmp_path: Path) -> None:
+    """Test loading config from env fallback when no config file is present."""
+    temp_key = tmp_path / "gha.pem"
+    temp_key.write_text("fake key")
+
+    env_map = {
+        "SLACK_BOT_TOKEN": "xoxb-test-token",
+        "SLACK_APP_TOKEN": "xapp-test-token",
+        "SLACK_SIGNING_SECRET": "test-secret",
+        "GITHUB_APP_ID": "12345",
+        "GITHUB_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\nfake key\n-----END RSA PRIVATE KEY-----\n",
+        "GITHUB_INSTALLATION_ID": "67890",
+        "GEMINI_API_KEY": "AIzaSyTest123456789",
+    }
+
+    prior = {key: os.environ.get(key) for key in env_map}
+    try:
+        for key, value in env_map.items():
+            os.environ[key] = value
+
+        config = load_config("nonexistent.yaml")
+
+        assert config.slack.bot_token == "xoxb-test-token"
+        assert config.slack.app_token == "xapp-test-token"
+        assert config.slack.signing_secret == "test-secret"
+        assert config.github.app_id == "12345"
+        assert config.github.installation_id == "67890"
+        assert config.gemini.api_key == "AIzaSyTest123456789"
+        assert Path(config.github.private_key_path).exists()
+        assert "BEGIN RSA PRIVATE KEY" in Path(config.github.private_key_path).read_text()
+    finally:
+        for key, value in prior.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        env_path = Path("/tmp/slack-agent-github-private-key.pem")
+        if env_path.exists():
+            env_path.unlink()
+
+
 def test_config_validation_invalid_slack_token(tmp_path: Path) -> None:
     """Test config validation with invalid Slack token."""
     config_file = tmp_path / "config.yaml"
