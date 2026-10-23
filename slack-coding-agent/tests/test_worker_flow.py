@@ -1,15 +1,11 @@
 """Tests for worker flow and integration."""
 
-import json
 import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from slackagent.config import Config
 from slackagent.database import Database, TaskStatus
-from slackagent.worker_v2 import Worker, TaskAbort
+from slackagent.worker import Worker, TaskAbort
 
 
 class TestWorkerFlow:

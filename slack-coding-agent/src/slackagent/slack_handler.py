@@ -1,414 +1,341 @@
-"""Slack event handling and bot integration."""
+"""Slack integration (Socket Mode: outbound websocket only, no public endpoint).
+
+Mention the bot to start a task::
+
+    @bot owner/repo add input validation to the signup form
+    @bot repo add ...            (when github.default_owner is set)
+
+Inside a task thread::
+
+    @bot status     show where the task is
+    @bot cancel     stop the task (requester or an approver)
+
+Plans and diffs are posted with Approve / Reject buttons. Only an approver
+may press them: the users in ``security.approvers``, or the requester when
+that list is empty.
+"""
 
 import logging
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from . import guards
 from .config import Config
-from .database import Database, TaskStatus
-from .security import SecurityError
+from .database import ACTIVE, Database, Task, TaskStatus
+from .github_ops import GitHubOperationError, validate_repo_name
 
 logger = logging.getLogger(__name__)
 
+_MENTION = re.compile(r"<@[A-Z0-9]+>")
+_REPO_TASK = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)\s+(.+)$", re.DOTALL)
+_NAME_TASK = re.compile(r"^([A-Za-z0-9_.-]+)\s+(.+)$", re.DOTALL)
+_BLOCK_TEXT_LIMIT = 2900
+
+# action_id -> (status the task must be in, status on approve/reject)
+_APPROVALS = {
+    "approve_plan": (TaskStatus.AWAITING_PLAN_APPROVAL, TaskStatus.PLAN_APPROVED),
+    "reject_plan": (TaskStatus.AWAITING_PLAN_APPROVAL, TaskStatus.PLAN_REJECTED),
+    "approve_impl": (TaskStatus.AWAITING_IMPL_APPROVAL, TaskStatus.IMPL_APPROVED),
+    "reject_impl": (TaskStatus.AWAITING_IMPL_APPROVAL, TaskStatus.IMPL_REJECTED),
+}
+
+_APPROVAL_MESSAGES = {
+    TaskStatus.PLAN_APPROVED: "✅ Plan approved by <@{user}>. Starting the implementation...",
+    TaskStatus.PLAN_REJECTED: "❌ Plan rejected by <@{user}>. Task closed.",
+    TaskStatus.IMPL_APPROVED: "✅ Changes approved by <@{user}>. Opening a pull request...",
+    TaskStatus.IMPL_REJECTED: "❌ Changes rejected by <@{user}>. Nothing was pushed.",
+}
+
+
+def _clip(text: str, limit: int = _BLOCK_TEXT_LIMIT) -> str:
+    return text if len(text) <= limit else text[: limit - 20] + "\n…(truncated)"
+
 
 class SlackHandler:
-    """Handles Slack events and interactions."""
+    """Handles Slack events and posts task updates."""
 
-    def __init__(self, config: Config, database: Database):
-        """Initialize Slack handler.
-
-        Args:
-            config: Application configuration
-            database: Database instance
-        """
+    def __init__(self, config: Config, database: Database, app: Optional[App] = None):
         self.config = config
         self.database = database
-        self.app = App(token=config.slack.bot_token)
-
-        # Register event handlers
+        self.app = app or App(
+            token=config.slack.bot_token,
+            signing_secret=config.slack.signing_secret or None,
+        )
         self._register_handlers()
 
-    def _register_handlers(self) -> None:
-        """Register Slack event handlers."""
+    # ------------------------------------------------------------------ events
 
+    def _register_handlers(self) -> None:
         @self.app.event("app_mention")
-        def handle_mention(event: dict, say: callable) -> None:
-            """Handle bot mentions to create tasks."""
+        def handle_mention(event: dict, say) -> None:
             try:
                 self._handle_mention(event, say)
-            except Exception as e:
-                logger.error(f"Error handling mention: {e}", exc_info=True)
-                say(f"❌ Error: {e}", thread_ts=event.get("thread_ts", event["ts"]))
+            except Exception:
+                logger.exception("Error handling mention")
+                say("❌ Something went wrong on my side. Please try again.",
+                    thread_ts=event.get("thread_ts", event.get("ts")))
 
-        @self.app.action("approve_plan")
-        def handle_plan_approval(ack: callable, body: dict) -> None:
-            """Handle plan approval button click."""
-            try:
+        for action_id in _APPROVALS:
+            def handler(ack, body, _action_id=action_id) -> None:
                 ack()
-                self._handle_approval(body, "plan")
-            except Exception as e:
-                logger.error(f"Error handling plan approval: {e}", exc_info=True)
+                try:
+                    self._handle_decision(body, _action_id)
+                except Exception:
+                    logger.exception("Error handling %s", _action_id)
 
-        @self.app.action("reject_plan")
-        def handle_plan_rejection(ack: callable, body: dict) -> None:
-            """Handle plan rejection button click."""
-            try:
-                ack()
-                self._handle_rejection(body, "plan")
-            except Exception as e:
-                logger.error(f"Error handling plan rejection: {e}", exc_info=True)
+            self.app.action(action_id)(handler)
 
-        @self.app.action("approve_impl")
-        def handle_impl_approval(ack: callable, body: dict) -> None:
-            """Handle implementation approval button click."""
-            try:
-                ack()
-                self._handle_approval(body, "impl")
-            except Exception as e:
-                logger.error(f"Error handling impl approval: {e}", exc_info=True)
-
-        @self.app.action("reject_impl")
-        def handle_impl_rejection(ack: callable, body: dict) -> None:
-            """Handle implementation rejection button click."""
-            try:
-                ack()
-                self._handle_rejection(body, "impl")
-            except Exception as e:
-                logger.error(f"Error handling impl rejection: {e}", exc_info=True)
-
-    def _handle_mention(self, event: dict, say: callable) -> None:
-        """Handle app mention event.
-
-        Args:
-            event: Slack event data
-            say: Function to send messages
-        """
+    def _handle_mention(self, event: dict, say) -> None:
         user_id = event["user"]
         channel_id = event["channel"]
         thread_ts = event.get("thread_ts", event["ts"])
-        text = event["text"]
+        text = _MENTION.sub("", event.get("text", "")).strip()
 
-        # Remove bot mention from text
-        text = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+        def reply(message: str) -> None:
+            say(message, thread_ts=thread_ts)
+
+        if not self._user_allowed(user_id):
+            reply("⛔ You're not on the list of people who can use this bot.")
+            self.database.record_event(None, "user_denied", user_id, {"channel": channel_id})
+            return
+
+        command = text.lower()
+        if command in ("cancel", "stop", "status") and event.get("thread_ts"):
+            task = self.database.get_task_by_thread(channel_id, thread_ts)
+            if not task:
+                reply("There's no task in this thread.")
+            elif command == "status":
+                reply(self._status_text(task))
+            else:
+                self._cancel(task, user_id, reply)
+            return
 
         if not text:
-            say(
-                "👋 Hi! Mention me with a task description to get started.\n"
-                "Example: `@bot can you add error handling to the API endpoints?`",
-                thread_ts=thread_ts,
-            )
+            reply("👋 Mention me with a repository and a request, e.g. "
+                  "`@bot owner/repo add input validation to the signup form`.")
             return
 
-        # Parse repository info from text or use default
-        # Format: @bot [owner/repo] task description
-        repo_match = re.match(r"^([a-zA-Z0-9\-_]+)/([a-zA-Z0-9\-_]+)\s+(.+)$", text)
+        existing = self.database.get_task_by_thread(channel_id, thread_ts)
+        if existing and existing.status in ACTIVE:
+            reply(f"I'm already working on task #{existing.id} in this thread. "
+                  "Say `cancel` to stop it first.")
+            return
 
-        if repo_match:
-            repo_owner = repo_match.group(1)
-            repo_name = repo_match.group(2)
-            task_description = repo_match.group(3)
-        elif self.config.github.default_owner:
-            # Extract repo name from text if default owner is set
-            repo_match = re.match(r"^([a-zA-Z0-9\-_]+)\s+(.+)$", text)
-            if repo_match:
-                repo_owner = self.config.github.default_owner
-                repo_name = repo_match.group(1)
-                task_description = repo_match.group(2)
-            else:
-                say(
-                    "❌ Please specify repository: `@bot owner/repo task description`",
-                    thread_ts=thread_ts,
+        parsed = self._parse_request(text)
+        if parsed is None:
+            reply("❌ Please name the repository: `@bot owner/repo what you want changed`")
+            return
+        repo_owner, repo_name, description = parsed
+        full_name = f"{repo_owner}/{repo_name}"
+
+        try:
+            validate_repo_name(repo_owner, repo_name)
+        except GitHubOperationError:
+            reply("❌ That doesn't look like a valid `owner/repo` name.")
+            return
+        if not self.config.repo_allowed(full_name):
+            reply(f"⛔ I'm not allowed to work on `{guards.escape_slack(full_name)}`.")
+            self.database.record_event(None, "repo_denied", user_id, {"repo": full_name})
+            return
+        if len(description) > self.config.security.max_request_chars:
+            reply(f"❌ That request is too long (limit {self.config.security.max_request_chars} "
+                  "characters). Please make it shorter and more specific.")
+            return
+        quota = self.config.security.max_active_tasks_per_user
+        if quota and self.database.count_active_tasks(user_id) >= quota:
+            reply(f"⏳ You already have {quota} task(s) in progress. "
+                  "Finish or cancel one before starting another.")
+            return
+
+        task = self.database.create_task(
+            slack_user_id=user_id,
+            slack_channel_id=channel_id,
+            slack_thread_ts=thread_ts,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch_name="",
+            task_description=description,
+        )
+        self.database.record_event(task.id, "task_created", user_id, {"repo": full_name})
+        reply(
+            f"✅ Got it — task #{task.id} on `{guards.escape_slack(full_name)}`.\n"
+            f"> {guards.escape_slack(guards.tail(description, 500))}\n"
+            "I'll post a plan here for approval before changing anything."
+        )
+        logger.info("Created task %s for %s", task.id, full_name)
+
+    def _parse_request(self, text: str):
+        match = _REPO_TASK.match(text)
+        if match:
+            return match.group(1), match.group(2), match.group(3).strip()
+        if self.config.github.default_owner:
+            match = _NAME_TASK.match(text)
+            if match:
+                return self.config.github.default_owner, match.group(1), match.group(2).strip()
+        return None
+
+    def _handle_decision(self, body: Dict[str, Any], action_id: str) -> None:
+        """Approve/reject button: approver check + atomic state transition."""
+        user_id = body["user"]["id"]
+        channel_id = body["channel"]["id"]
+        try:
+            task_id = int(body["actions"][0]["value"])
+        except (KeyError, IndexError, ValueError):
+            return
+        task = self.database.get_task(task_id)
+        if not task:
+            return
+
+        if not self._can_approve(task, user_id):
+            self._ephemeral(channel_id, user_id, "⚠️ You're not allowed to approve or reject this task.")
+            self.database.record_event(task_id, "approval_denied", user_id, {"action": action_id})
+            return
+
+        expected, new = _APPROVALS[action_id]
+        if not self.database.transition_status(task_id, expected, new):
+            self._ephemeral(channel_id, user_id,
+                            f"This button is out of date (task #{task_id} is `{task.status.value}`).")
+            return
+
+        self.database.record_event(task_id, new.value, user_id, {"diff_sha256": task.diff_sha256})
+        message = _APPROVAL_MESSAGES[new].format(user=user_id)
+        # Replace the buttons so the decision can't be clicked twice.
+        message_ts = (body.get("message") or {}).get("ts")
+        if message_ts:
+            try:
+                original = [b for b in body["message"].get("blocks", []) if b.get("type") != "actions"]
+                self.app.client.chat_update(
+                    channel=channel_id, ts=message_ts, text=message,
+                    blocks=original + [{"type": "context", "elements": [{"type": "mrkdwn", "text": message}]}],
                 )
-                return
+            except Exception:
+                logger.warning("could not update approval message", exc_info=True)
+        self._post(task, message)
+        logger.info("Task %s -> %s by %s", task_id, new.value, user_id)
+
+    def _cancel(self, task: Task, user_id: str, reply) -> None:
+        if not (task.slack_user_id == user_id or self._can_approve(task, user_id)):
+            reply("⚠️ Only the requester or an approver can cancel this task.")
+            return
+        if task.status not in ACTIVE:
+            reply(f"Task #{task.id} is already finished (`{task.status.value}`).")
+            return
+        if self.database.transition_status(task.id, task.status, TaskStatus.CANCELLED):
+            self.database.record_event(task.id, "cancelled", user_id, {})
+            reply(f"🛑 Task #{task.id} cancelled. Nothing further will be pushed.")
         else:
-            say(
-                "❌ Please specify repository: `@bot owner/repo task description`",
-                thread_ts=thread_ts,
-            )
-            return
+            reply("The task changed state just now — try again.")
 
-        # Check user authorization
-        try:
-            from .security import SecurityManager
+    def _status_text(self, task: Task) -> str:
+        text = f"Task #{task.id} on `{task.repo_owner}/{task.repo_name}` is `{task.status.value}`."
+        if task.pr_url:
+            text += f"\nPull request: {task.pr_url}"
+        if task.error_message:
+            text += f"\n{task.error_message}"
+        return text
 
-            security = SecurityManager(self.config.security)
-            security.check_user(user_id)
-        except SecurityError as e:
-            say(f"❌ {e}", thread_ts=thread_ts)
-            return
+    # ------------------------------------------------------------------ policy
 
-        # Create branch name
-        branch_name = f"bot/{repo_name}-{thread_ts.replace('.', '-')}"
+    def _user_allowed(self, user_id: str) -> bool:
+        allowed = self.config.security.allowed_users
+        return not allowed or user_id in allowed
 
-        # Create task in database
-        try:
-            task = self.database.create_task(
-                slack_user_id=user_id,
-                slack_channel_id=channel_id,
-                slack_thread_ts=thread_ts,
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                branch_name=branch_name,
-                task_description=task_description,
-            )
+    def _can_approve(self, task: Task, user_id: str) -> bool:
+        approvers = self.config.security.approvers
+        if approvers:
+            return user_id in approvers
+        return user_id == task.slack_user_id
 
-            say(
-                f"✅ Task created! I'll start planning the implementation.\n\n"
-                f"**Repository:** `{repo_owner}/{repo_name}`\n"
-                f"**Branch:** `{branch_name}`\n"
-                f"**Task:** {task_description}\n\n"
-                f"_Task ID: {task.id}_",
-                thread_ts=thread_ts,
-            )
+    # ------------------------------------------------------------------ notifier API (used by Worker)
 
-            logger.info(f"Created task {task.id} for {repo_owner}/{repo_name}")
+    def say(self, task: Task, text: str) -> None:
+        self._post(task, text)
 
-        except Exception as e:
-            logger.error(f"Failed to create task: {e}", exc_info=True)
-            say(f"❌ Failed to create task: {e}", thread_ts=thread_ts)
-
-    def _handle_approval(self, body: dict, approval_type: str) -> None:
-        """Handle approval action.
-
-        Args:
-            body: Slack interaction payload
-            approval_type: 'plan' or 'impl'
-        """
-        # Extract task ID from action value
-        task_id = int(body["actions"][0]["value"])
-        user_id = body["user"]["id"]
-
+    def post_plan(self, task_id: int, plan: Dict[str, Any]) -> None:
         task = self.database.get_task(task_id)
         if not task:
-            logger.error(f"Task {task_id} not found for approval")
             return
-
-        # Check if user is the one who created the task
-        if task.slack_user_id != user_id:
-            self._send_ephemeral_message(
-                body["channel"]["id"],
-                user_id,
-                "⚠️ Only the task creator can approve changes.",
-            )
-            return
-
-        # Update task status
-        if approval_type == "plan":
-            self.database.update_task_status(task_id, TaskStatus.PLAN_APPROVED)
-            message = "✅ Plan approved! Starting implementation..."
-        else:
-            self.database.update_task_status(task_id, TaskStatus.IMPL_APPROVED)
-            message = "✅ Implementation approved! Creating pull request..."
-
-        # Send message to thread
-        self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=message,
+        esc = guards.escape_slack
+        files = "\n".join(f"• `{esc(f)}`" for f in plan.get("files", [])[:10]) or "• (none listed)"
+        body = (
+            f"*📋 Plan for task #{task_id}*\n{esc(plan.get('summary', ''))}\n\n"
+            f"*Files:*\n{files}\n\n"
+            f"*Risk:* {esc(plan.get('risk', 'medium'))} — {esc(plan.get('risk_reason', ''))}\n"
+            f"*How to verify:* {esc(plan.get('how_to_verify', ''))}"
         )
+        self._post_with_buttons(task, _clip(body), "approve_plan", "reject_plan", "✅ Approve plan")
 
-        logger.info(f"Task {task_id} {approval_type} approved by {user_id}")
-
-    def _handle_rejection(self, body: dict, rejection_type: str) -> None:
-        """Handle rejection action.
-
-        Args:
-            body: Slack interaction payload
-            rejection_type: 'plan' or 'impl'
-        """
-        # Extract task ID from action value
-        task_id = int(body["actions"][0]["value"])
-        user_id = body["user"]["id"]
-
-        task = self.database.get_task(task_id)
-        if not task:
-            logger.error(f"Task {task_id} not found for rejection")
-            return
-
-        # Check if user is the one who created the task
-        if task.slack_user_id != user_id:
-            self._send_ephemeral_message(
-                body["channel"]["id"],
-                user_id,
-                "⚠️ Only the task creator can reject changes.",
-            )
-            return
-
-        # Update task status
-        if rejection_type == "plan":
-            self.database.update_task_status(task_id, TaskStatus.PLAN_REJECTED)
-            message = "❌ Plan rejected. Task cancelled."
-        else:
-            self.database.update_task_status(task_id, TaskStatus.IMPL_REJECTED)
-            message = "❌ Implementation rejected. Task cancelled."
-
-        # Send message to thread
-        self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=message,
-        )
-
-        logger.info(f"Task {task_id} {rejection_type} rejected by {user_id}")
-
-    def _send_ephemeral_message(
-        self, channel_id: str, user_id: str, text: str
+    def post_implementation(
+        self, task_id: int, summary: str, diff_preview: str, checks_report: str = ""
     ) -> None:
-        """Send ephemeral message visible only to one user.
-
-        Args:
-            channel_id: Channel ID
-            user_id: User ID
-            text: Message text
-        """
-        try:
-            self.app.client.chat_postEphemeral(
-                channel=channel_id, user=user_id, text=text
-            )
-        except Exception as e:
-            logger.error(f"Failed to send ephemeral message: {e}")
-
-    def post_plan(self, task_id: int, plan: str) -> None:
-        """Post a plan to Slack with approval buttons.
-
-        Args:
-            task_id: Task ID
-            plan: Plan text
-        """
         task = self.database.get_task(task_id)
         if not task:
-            logger.error(f"Task {task_id} not found")
             return
-
+        esc = guards.escape_slack
         blocks = [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"**📋 Implementation Plan**\n\n{plan}"},
-            },
-            {"type": "divider"},
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✅ Approve"},
-                        "style": "primary",
-                        "action_id": "approve_plan",
-                        "value": str(task_id),
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "❌ Reject"},
-                        "style": "danger",
-                        "action_id": "reject_plan",
-                        "value": str(task_id),
-                    },
-                ],
-            },
+            {"type": "section", "text": {"type": "mrkdwn", "text": _clip(
+                f"*✨ Changes ready for review (task #{task_id})*\n{esc(summary)}")}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": _clip(
+                f"*Diff:*\n```{esc(diff_preview)}```")}},
         ]
-
+        if checks_report:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _clip(
+                f"*Checks:*\n```{esc(guards.tail(checks_report, 1500))}```")}})
+        blocks.append(self._buttons(task_id, "approve_impl", "reject_impl", "✅ Approve & open PR"))
         self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=f"Plan ready for review",
-            blocks=blocks,
-        )
-
-    def post_implementation(self, task_id: int, summary: str, diff_preview: str) -> None:
-        """Post implementation results with approval buttons.
-
-        Args:
-            task_id: Task ID
-            summary: Implementation summary
-            diff_preview: Preview of changes (truncated diff)
-        """
-        task = self.database.get_task(task_id)
-        if not task:
-            logger.error(f"Task {task_id} not found")
-            return
-
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"**✨ Implementation Complete**\n\n{summary}",
-                },
-            },
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"**Changes:**\n```\n{diff_preview}\n```"},
-            },
-            {"type": "divider"},
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✅ Approve & Create PR"},
-                        "style": "primary",
-                        "action_id": "approve_impl",
-                        "value": str(task_id),
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "❌ Reject"},
-                        "style": "danger",
-                        "action_id": "reject_impl",
-                        "value": str(task_id),
-                    },
-                ],
-            },
-        ]
-
-        self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=f"Implementation ready for review",
-            blocks=blocks,
+            channel=task.slack_channel_id, thread_ts=task.slack_thread_ts,
+            text=f"Changes for task #{task_id} are ready for review", blocks=blocks,
         )
 
     def post_pr_created(self, task_id: int, pr_url: str) -> None:
-        """Post PR creation notification.
-
-        Args:
-            task_id: Task ID
-            pr_url: Pull request URL
-        """
         task = self.database.get_task(task_id)
-        if not task:
-            logger.error(f"Task {task_id} not found")
-            return
-
-        self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=f"🎉 Pull request created: {pr_url}",
-        )
+        if task:
+            self._post(task, f"🎉 Pull request opened: {pr_url}\nA human still has to review and merge it.")
 
     def post_error(self, task_id: int, error_message: str) -> None:
-        """Post error notification.
-
-        Args:
-            task_id: Task ID
-            error_message: Error message
-        """
         task = self.database.get_task(task_id)
-        if not task:
-            logger.error(f"Task {task_id} not found")
-            return
+        if task:
+            self._post(task, f"❌ Task failed: {guards.escape_slack(error_message)}")
 
+    # ------------------------------------------------------------------ helpers
+
+    def _buttons(self, task_id: int, approve_id: str, reject_id: str, approve_label: str) -> dict:
+        return {
+            "type": "actions",
+            "elements": [
+                {"type": "button", "text": {"type": "plain_text", "text": approve_label},
+                 "style": "primary", "action_id": approve_id, "value": str(task_id)},
+                {"type": "button", "text": {"type": "plain_text", "text": "❌ Reject"},
+                 "style": "danger", "action_id": reject_id, "value": str(task_id)},
+            ],
+        }
+
+    def _post_with_buttons(self, task: Task, text: str, approve_id: str, reject_id: str, label: str) -> None:
         self.app.client.chat_postMessage(
-            channel=task.slack_channel_id,
-            thread_ts=task.slack_thread_ts,
-            text=f"❌ Task failed: {error_message}",
+            channel=task.slack_channel_id, thread_ts=task.slack_thread_ts,
+            text=f"Task #{task.id} needs your approval",
+            blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                    self._buttons(task.id, approve_id, reject_id, label)],
         )
 
+    def _post(self, task: Task, text: str) -> None:
+        try:
+            self.app.client.chat_postMessage(
+                channel=task.slack_channel_id, thread_ts=task.slack_thread_ts, text=_clip(text, 3900)
+            )
+        except Exception:
+            logger.exception("Failed to post to Slack")
+
+    def _ephemeral(self, channel_id: str, user_id: str, text: str) -> None:
+        try:
+            self.app.client.chat_postEphemeral(channel=channel_id, user=user_id, text=text)
+        except Exception:
+            logger.warning("Failed to send ephemeral message", exc_info=True)
+
     def start(self) -> None:
-        """Start the Slack bot using Socket Mode."""
-        handler = SocketModeHandler(self.app, self.config.slack.app_token)
+        """Connect to Slack over Socket Mode (blocks)."""
         logger.info("Starting Slack bot in Socket Mode...")
-        handler.start()
+        SocketModeHandler(self.app, self.config.slack.app_token).start()

@@ -1,59 +1,34 @@
-# Sandbox container for agent execution
-# This container runs with minimal privileges. No GitHub token and no provider
-# API key are provisioned here: the agent authenticates to Amazon Bedrock via
-# the task's IAM role (CLAUDE_CODE_USE_BEDROCK=1). If Claude/Bedrock is not
-# reachable (or the `claude` binary is absent) the container falls back to a
-# deterministic SIM backend so the approval/diff/PR flow still works.
+# Sandbox image for the coding agent. Built and run locally:
+#
+#   docker build -t slack-coding-agent-sandbox:latest .
+#
+# The worker starts one throwaway container per agent run or check, with a
+# read-only root filesystem, all capabilities dropped, resource limits and
+# (for checks) no network. Nothing in this image holds credentials: the only
+# secret a container ever sees is the AI API key, passed at run time.
 
 FROM python:3.11-slim
 
-# Install git, basic tools, and build dependencies for cryptography
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    git \
-    ca-certificates \
-    gcc \
-    g++ \
-    libffi-dev \
-    libssl-dev \
-    python3-dev \
-    cargo \
-    rustc \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for execution
-RUN useradd -m -u 1000 -s /bin/bash sandbox
-
-# Install the wheel-less code under /opt so `python -m slackagent` works
-COPY src/ /opt/slackagent/
-
-# Install the project runtime dependencies required by the bot itself.
-# The Slack app imports `slack_bolt`, and the agent code expects the Gemini SDK
-# and the JWT crypto stack to be present in the container at runtime.
+# Agent runtime + common check tools. Add your repos' test dependencies here.
 RUN pip install --no-cache-dir \
-    boto3 \
-    pyyaml \
-    slack-bolt>=1.18.0 \
-    google-generativeai>=0.3.0 \
-    PyJWT>=2.8.0 \
-    cryptography>=41.0.0 \
-    requests>=2.31.0 \
-    python-dotenv>=1.0.0 \
+    "google-generativeai>=0.8.0" \
     pytest \
-    black \
-    ruff \
-    mypy \
-    pylint
+    ruff
 
-# Set up working directory (owned by the non-root user so the checkout can be extracted)
-WORKDIR /workspace
-RUN mkdir -p /workspace /io && chown sandbox:sandbox /workspace /io
+# Only the agent code is needed inside the sandbox.
+COPY src/slackagent /opt/slackagent/slackagent
+ENV PYTHONPATH=/opt/slackagent \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-ENV PYTHONPATH=/opt/slackagent
-ENV CLAUDE_CODE_USE_BEDROCK=1
-
-# Switch to non-root user
+# Fallback non-root user (the worker normally runs containers as your own UID).
+RUN useradd -m -u 1000 -s /usr/sbin/nologin sandbox \
+    && mkdir -p /workspace /io && chown sandbox:sandbox /workspace /io
 USER sandbox
+WORKDIR /workspace
 
-# Default command (will be overridden by the worker's RunTask overrides)
-CMD ["python", "-m", "slackagent.fargate_entry", "checks", ":"]
+CMD ["python", "-m", "slackagent.agent_runner", "--help"]

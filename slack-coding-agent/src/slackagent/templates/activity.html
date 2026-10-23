@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Activity · Coding Agent{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Your activity</h1>
+  <p class="muted">Audit log of everything done with your account through this page.</p>
+  <table>
+    <tr><th>When (UTC)</th><th>Event</th><th>Details</th></tr>
+    {% for e in events %}
+      <tr><td>{{ e.created_at[:19] }}</td><td>{{ e.event[4:] }}</td>
+          <td class="muted">{% for k, v in e.detail.items() %}{{ k }}: {{ v }}<br>{% endfor %}</td></tr>
+    {% else %}
+      <tr><td colspan="3" class="muted">Nothing yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Coding Agent{% endblock %}</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e3e3e0;
+          --accent:#1f6feb; --ok:#1a7f37; --bad:#cf222e; --add:#e6ffec; --del:#ffebe9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111214; --card:#1a1b1e; --ink:#ececee; --muted:#9a9aa2; --line:#2c2d31;
+            --accent:#4c8dff; --ok:#3fb950; --bad:#f85149; --add:#12261a; --del:#2d1416; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 24px; border-bottom:1px solid var(--line); background:var(--card); }
+  header .brand { font-weight:600; text-decoration:none; color:var(--ink); }
+  header .spacer { flex:1; }
+  header a, header button.link { color:var(--muted); text-decoration:none; font-size:14px; }
+  main { max-width:880px; margin:32px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px 24px; margin-bottom:20px; }
+  h1 { font-size:22px; margin:0 0 6px; } h2 { font-size:17px; margin:0 0 10px; }
+  .muted { color:var(--muted); }
+  .btn { display:inline-block; border:1px solid var(--line); background:var(--card); color:var(--ink);
+         padding:8px 14px; border-radius:8px; font:inherit; cursor:pointer; text-decoration:none; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.danger { color:var(--bad); }
+  button.link { background:none; border:none; cursor:pointer; font:inherit; padding:0; }
+  form.inline { display:inline; }
+  textarea { width:100%; min-height:260px; font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+             background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; }
+  ul.repos { list-style:none; margin:0; padding:0; }
+  ul.repos li { border-top:1px solid var(--line); } ul.repos li:first-child { border-top:none; }
+  ul.repos a { display:flex; justify-content:space-between; padding:10px 2px; color:var(--ink); text-decoration:none; }
+  ul.repos a:hover { color:var(--accent); }
+  .tag { font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; }
+  pre.diff { margin:0; overflow-x:auto; font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+             border:1px solid var(--line); border-radius:8px; background:var(--bg); padding:8px 0; }
+  pre.diff span { display:block; padding:0 12px; white-space:pre; }
+  pre.diff .add { background:var(--add); } pre.diff .del { background:var(--del); } pre.diff .hunk { color:var(--muted); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px; }
+  .status-done { color:var(--ok); font-weight:600; } .status-failed, .status-rejected { color:var(--bad); font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { text-align:left; padding:6px 4px; border-top:1px solid var(--line); vertical-align:top; }
+  img.avatar { width:22px; height:22px; border-radius:50%; vertical-align:middle; }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/">🤖 Coding Agent</a>
+  <span class="tag">AI: {{ ai }}</span>
+  <span class="spacer"></span>
+  {% if login %}
+    <a href="/activity">Activity</a>
+    <span class="muted">@{{ login }}</span>
+    <form class="inline" method="post" action="/auth/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="link" type="submit">Disconnect</button>
+    </form>
+  {% endif %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

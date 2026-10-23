@@ -1,237 +1,182 @@
-"""CLI interface for local testing without Slack."""
+"""Local CLI: the same sandboxed plan -> approve -> implement -> approve pipeline
+as the Slack bot, with approvals typed in the terminal.
+
+    # a local checkout: the result is pushed as a new branch into that repo
+    slack-coding-agent-cli --repo ./my-project --task "add a --version flag"
+
+    # a GitHub repo (needs the github: section): the result is a pull request
+    slack-coding-agent-cli --repo owner/name --task "fix the typo in README"
+
+Only committed work in a local checkout is used; uncommitted edits are ignored.
+"""
 
 import argparse
+import json
 import logging
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict
 
-from .agent_runner import AgentRunner, format_check_results
-from .config import load_config
-from .github_ops import GitHubClient, GitOperations
-from .security import SecurityManager
+from . import guards
+from .config import RepoConfig, load_config
+from .database import Database, Task, TaskStatus
+from .worker import Worker
+
+TERMINAL = {
+    TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DECLINED,
+    TaskStatus.NEEDS_INFO, TaskStatus.PLAN_REJECTED, TaskStatus.IMPL_REJECTED,
+}
 
 
-def setup_logging(level: str = "INFO") -> None:
-    """Set up logging.
+class ConsoleNotifier:
+    """Prints worker updates to the terminal."""
 
-    Args:
-        level: Logging level
+    def say(self, task: Task, text: str) -> None:
+        print(f"\n{text}")
+
+    def post_plan(self, task_id: int, plan: Dict[str, Any]) -> None:
+        print("\n" + "=" * 60 + "\n📋 PLAN\n" + "=" * 60)
+        print(plan.get("summary", ""))
+        print("\nFiles:", ", ".join(plan.get("files", [])) or "(none listed)")
+        print(f"Risk: {plan.get('risk')} — {plan.get('risk_reason', '')}")
+        print(f"How to verify: {plan.get('how_to_verify', '')}")
+
+    def post_implementation(self, task_id: int, summary: str, diff_preview: str, checks_report: str = "") -> None:
+        print("\n" + "=" * 60 + "\n✨ CHANGES\n" + "=" * 60)
+        print(summary)
+        print("\n--- diff ---\n" + diff_preview)
+        if checks_report:
+            print("\n--- checks ---\n" + checks_report)
+
+    def post_pr_created(self, task_id: int, pr_url: str) -> None:
+        print(f"\n🎉 {pr_url}")
+
+
+class LocalRepoTarget:
+    """Stands in for GitHub when working on a local checkout.
+
+    The worker clones from the local path and "opens a PR" by pushing a new
+    branch back into it. Nothing leaves the machine.
     """
-    logging.basicConfig(
-        level=getattr(logging, level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+
+    def __init__(self, path: Path):
+        self.path = path.resolve()
+
+    def get_clone_url(self, repo_owner: str, repo_name: str) -> str:
+        return str(self.path)
+
+    def git_auth_env(self, repo_owner: str, repo_name: str) -> Dict[str, str]:
+        return {}
+
+    def create_pull_request(self, repo_owner, repo_name, head_branch, title, body, base_branch="main") -> str:
+        return (f"Branch '{head_branch}' was created in {self.path} "
+                f"(review with: git -C {self.path} diff {base_branch}...{head_branch})")
+
+
+def _ask(prompt: str) -> bool:
+    try:
+        return input(f"\n{prompt} [y/N]: ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _current_branch(path: Path) -> str:
+    out = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, check=True,
     )
+    return out.stdout.strip()
 
 
 def main() -> None:
-    """CLI main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Slack Coding Agent CLI - Local testing mode"
-    )
-    parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration file (default: config.yaml)",
-    )
-    parser.add_argument(
-        "--repo",
-        required=True,
-        help="Path to local repository or owner/repo for GitHub",
-    )
-    parser.add_argument(
-        "--task",
-        required=True,
-        help="Task description",
-    )
-    parser.add_argument(
-        "--plan-only",
-        action="store_true",
-        help="Only generate plan, don't implement",
-    )
-    parser.add_argument(
-        "--output-dir",
-        help="Output directory for results (default: temporary directory)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging",
-    )
-
+    parser = argparse.ArgumentParser(description="Run the coding agent locally (no Slack).")
+    parser.add_argument("--config", default="config.yaml", help="configuration file")
+    parser.add_argument("--repo", required=True, help="path to a local git checkout, or owner/repo on GitHub")
+    parser.add_argument("--task", required=True, help="what you want changed")
+    parser.add_argument("--plan-only", action="store_true", help="stop after showing the plan")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    # Set up logging
-    setup_logging("DEBUG" if args.verbose else "INFO")
-    logger = logging.getLogger(__name__)
-
-    # Load configuration
-    try:
-        config = load_config(args.config)
-        logger.info(f"Loaded configuration from {args.config}")
-    except Exception as e:
-        print(f"❌ Failed to load configuration: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Initialize components
-    security_manager = SecurityManager(config.security)
-    agent_runner = AgentRunner(
-        config.agent,
-        config.docker,
-        security_manager,
-        config.gemini.api_key,
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    try:
+        from dotenv import load_dotenv
 
-    # Determine if repo is local path or GitHub repo
-    repo_path = Path(args.repo)
-    is_local = repo_path.exists() and repo_path.is_dir()
+        load_dotenv()
+    except ImportError:
+        pass
 
-    # Set up working directory
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        workdir = output_dir / "repo"
-    else:
-        output_dir = None
-        workdir = None
+    local_path = Path(args.repo).expanduser()
+    is_local = local_path.is_dir()
+    if is_local and not (local_path / ".git").exists():
+        sys.exit(f"❌ {local_path} is not a git repository")
 
     try:
-        if is_local:
-            logger.info(f"Using local repository: {repo_path}")
-            workdir = repo_path
-        else:
-            # GitHub repository
-            logger.info(f"Cloning GitHub repository: {args.repo}")
+        config = load_config(args.config, require=() if is_local else ("github",))
+    except Exception as e:
+        sys.exit(f"❌ Failed to load configuration: {e}")
 
-            if "/" not in args.repo:
-                print("❌ GitHub repo must be in format: owner/repo", file=sys.stderr)
-                sys.exit(1)
+    if is_local:
+        owner, name = "local", guards.slugify(local_path.resolve().name, 60)
+        full_name = f"{owner}/{name}"
+        repo_cfg = config.repos.get(full_name) or RepoConfig()
+        repo_cfg.default_branch = _current_branch(local_path)
+        config.repos[full_name] = repo_cfg
+        if config.security.allowed_repos:
+            config.security.allowed_repos.append(full_name)
+        target = LocalRepoTarget(local_path)
+    else:
+        if "/" not in args.repo:
+            sys.exit("❌ --repo must be a local path or owner/repo")
+        owner, name = args.repo.split("/", 1)
+        full_name = args.repo
+        target = None  # Worker uses the real GitHub client
+        if not config.repo_allowed(full_name):
+            sys.exit(f"❌ {full_name} is not in security.allowed_repos")
 
-            owner, repo = args.repo.split("/", 1)
+    with tempfile.TemporaryDirectory(prefix="slackagent-cli-") as tmp:
+        config.database.path = str(Path(tmp) / "cli.db")
+        database = Database(config.database.path)
+        worker = Worker(config, database, ConsoleNotifier(), worker_id="cli", github=target)
 
-            # Use temporary directory if no output dir specified
-            if not output_dir:
-                temp_context = tempfile.TemporaryDirectory()
-                workdir = Path(temp_context.name) / "repo"
-            else:
-                temp_context = None
-
-            try:
-                github_client = GitHubClient(config.github)
-                clone_url = github_client.get_clone_url(owner, repo)
-                GitOperations.clone_repository(clone_url, workdir)
-            except Exception as e:
-                print(f"❌ Failed to clone repository: {e}", file=sys.stderr)
-                if temp_context:
-                    temp_context.cleanup()
-                sys.exit(1)
-
-        # Run planning phase
-        print("\n🔍 Planning phase...")
-        print("=" * 60)
-
-        try:
-            plan = agent_runner.run_planning_phase(workdir, args.task)
-            print("\n📋 Implementation Plan:")
-            print(plan)
-
-            if output_dir:
-                plan_file = output_dir / "plan.txt"
-                plan_file.write_text(plan)
-                print(f"\n💾 Plan saved to: {plan_file}")
-
-        except Exception as e:
-            print(f"\n❌ Planning failed: {e}", file=sys.stderr)
+        problems = worker.sandbox.preflight([config.docker.image])
+        if problems:
+            for problem in problems:
+                print(f"❌ {problem}", file=sys.stderr)
             sys.exit(1)
 
-        if args.plan_only:
-            print("\n✅ Planning complete (plan-only mode)")
-            return
+        task = database.create_task(
+            slack_user_id="cli", slack_channel_id="cli", slack_thread_ts="cli",
+            repo_owner=owner, repo_name=name, branch_name="", task_description=args.task,
+        )
+        print(f"🤖 Task #{task.id} on {full_name} (AI: {config.ai.provider})")
 
-        # Ask for approval
-        print("\n" + "=" * 60)
-        approval = input("\n👍 Approve plan and continue with implementation? [y/N]: ")
+        while True:
+            worker.process_one()
+            task = database.get_task(task.id)
 
-        if approval.lower() != "y":
-            print("❌ Implementation cancelled")
-            sys.exit(0)
-
-        # Run implementation phase
-        print("\n⚙️  Implementation phase...")
-        print("=" * 60)
-
-        try:
-            # Create a branch for changes
-            branch_name = f"cli-task-{abs(hash(args.task)) % 10000}"
-            GitOperations.create_branch(workdir, branch_name)
-            print(f"📝 Created branch: {branch_name}")
-
-            # Run implementation
-            summary = agent_runner.run_implementation_phase(
-                workdir, args.task, plan
-            )
-
-            print("\n✨ Implementation Summary:")
-            print(summary)
-
-            # Check for changes
-            if not GitOperations.has_changes(workdir):
-                print("\n⚠️  No changes were made")
-                return
-
-            # Get diff
-            diff = GitOperations.get_diff(workdir, cached=False)
-            print("\n📊 Changes:")
-            print(diff[:2000])
-            if len(diff) > 2000:
-                print("\n... (truncated)")
-
-            # Security scan
-            print("\n🔒 Security scan...")
-            secret_warning = security_manager.scan_diff_for_secrets(diff)
-            if secret_warning:
-                print(f"\n⚠️  {secret_warning}")
-                proceed = input("\nProceed anyway? [y/N]: ")
-                if proceed.lower() != "y":
-                    print("❌ Cancelled due to security concerns")
-                    sys.exit(1)
-
-            # Run checks
-            print("\n🧪 Running checks...")
-            check_results = agent_runner.run_checks(workdir)
-            print(format_check_results(check_results))
-
-            # Save results
-            if output_dir:
-                summary_file = output_dir / "summary.txt"
-                summary_file.write_text(summary)
-
-                diff_file = output_dir / "diff.patch"
-                diff_file.write_text(diff)
-
-                print(f"\n💾 Results saved to: {output_dir}")
-
-            print("\n✅ Implementation complete!")
-            print(f"📍 Branch: {branch_name}")
-
-            # Offer to commit
-            commit = input("\n💾 Commit changes? [y/N]: ")
-            if commit.lower() == "y":
-                commit_msg = f"{args.task}\n\nGenerated by Slack Coding Agent CLI"
-                GitOperations.commit_changes(workdir, commit_msg)
-                print("✅ Changes committed")
-
-        except Exception as e:
-            print(f"\n❌ Implementation failed: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-
-    finally:
-        # Cleanup
-        if not is_local and not output_dir and 'temp_context' in locals():
-            if temp_context:
-                temp_context.cleanup()
+            if task.status == TaskStatus.AWAITING_PLAN_APPROVAL:
+                if args.plan_only:
+                    print("\n✅ Plan only — stopping here.")
+                    return
+                approved = _ask("Approve this plan and let the agent make the change?")
+                new = TaskStatus.PLAN_APPROVED if approved else TaskStatus.PLAN_REJECTED
+                database.transition_status(task.id, TaskStatus.AWAITING_PLAN_APPROVAL, new)
+            elif task.status == TaskStatus.AWAITING_IMPL_APPROVAL:
+                where = "push a branch into your repo" if is_local else "push a branch and open a pull request"
+                approved = _ask(f"Approve these changes and {where}?")
+                new = TaskStatus.IMPL_APPROVED if approved else TaskStatus.IMPL_REJECTED
+                database.transition_status(task.id, TaskStatus.AWAITING_IMPL_APPROVAL, new)
+            elif task.status in TERMINAL:
+                if task.status != TaskStatus.COMPLETED:
+                    print(f"\nStopped: {task.status.value}")
+                if args.verbose:
+                    print(json.dumps(database.list_events(task.id), indent=2, default=str))
+                sys.exit(0 if task.status == TaskStatus.COMPLETED else 1)
 
 
 if __name__ == "__main__":
