@@ -16,7 +16,8 @@ DEFAULTS: dict = {
         "baseUrl": "http://localhost:8765",
         "sessionHours": 8,
         "dataDir": "./data",
-        "clientDist": "./client/dist",
+        "clientDist": "./client/dist",  # "" = API only (page hosted elsewhere)
+        "extraHosts": [],  # more Host headers to accept, e.g. the backend's own address behind a proxy
     },
     "github": {"clientId": "", "clientSecret": ""},
     "agentService": {"url": "http://127.0.0.1:8766", "token": ""},
@@ -67,12 +68,14 @@ def load_config(config_path: str | os.PathLike = "config.json") -> dict:
     gh["clientSecret"] = gh.get("clientSecret") or os.environ.get("GITHUB_CLIENT_SECRET", "")
     config["agentService"]["token"] = config["agentService"].get("token") or os.environ.get("AGENT_SERVICE_TOKEN", "")
     config["web"]["port"] = int(config["web"]["port"] or DEFAULTS["web"]["port"])
+    config["web"]["extraHosts"] = _as_list(config["web"].get("extraHosts"))
     sec["allowedUsers"] = _as_list(sec.get("allowedUsers"))
     sec["allowedRepos"] = _as_list(sec.get("allowedRepos"))
     # Relative paths are relative to the config file, not the working directory.
     base = path.resolve().parent
     for section, key in (("web", "dataDir"), ("web", "clientDist"), ("security", "killSwitchFile")):
-        config[section][key] = str((base / config[section][key]).resolve())
+        if config[section][key]:
+            config[section][key] = str((base / config[section][key]).resolve())
     validate(config)
     return config
 

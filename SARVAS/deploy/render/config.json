@@ -2,10 +2,11 @@
   "web": {
     "host": "0.0.0.0",
     "port": "${PORT}",
-    "baseUrl": "${RENDER_EXTERNAL_URL}",
+    "baseUrl": "${SARVAS_PUBLIC_URL}",
+    "extraHosts": "${RENDER_EXTERNAL_HOSTNAME}",
     "sessionHours": 8,
     "dataDir": "./data",
-    "clientDist": "./client-dist"
+    "clientDist": ""
   },
   "github": {
     "clientId": "${GITHUB_CLIENT_ID}",

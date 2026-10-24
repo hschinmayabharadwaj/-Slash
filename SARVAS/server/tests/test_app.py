@@ -388,3 +388,33 @@ def test_spa_fallback_and_no_path_escape(env, tmp_path):
     assert "SARVAS" in c.get("/repos/octo/proj").text
     assert "nope" not in c.get("/..%2Fsecret.txt").text
     assert c.get("/api/unknown").status_code == 404
+
+
+def test_api_only_behind_vercel_rewrite(tmp_path):
+    """Page on Vercel (public address), API on Render reached through Vercel rewrites."""
+    (tmp_path / "config.json").write_text(json.dumps({
+        "web": {"port": 10000, "baseUrl": "https://sarvas.vercel.app", "dataDir": str(tmp_path),
+                "clientDist": "", "extraHosts": "sarvas.onrender.com"},
+        "github": {"clientId": "Iv1.test", "clientSecret": "shh"},
+        "agentService": {"token": "x" * 32},
+        "security": {"allowedUsers": "alice", "killSwitchFile": str(tmp_path / "KILL")},
+    }))
+    config = load_config(tmp_path / "config.json")
+    gh = FakeGitHub()
+    app = create_app(config, Store(str(tmp_path), bytes([7]) * 32), FakeAgent(), gh.http)
+    c = TestClient(app, base_url="https://sarvas.onrender.com", follow_redirects=False)
+
+    assert "API is running" in c.get("/").text
+    login = c.get("/auth/login")
+    q = parse_qs(urlparse(login.headers["location"]).query)
+    assert q["redirect_uri"] == ["https://sarvas.vercel.app/auth/callback"]
+    assert "secure" in login.headers["set-cookie"].lower()
+    c.get(f"/auth/callback?code=abc&state={q['state'][0]}")
+    csrf = c.get("/api/session").json()["csrf"]
+    headers = {"X-CSRF-Token": csrf, "Origin": "https://sarvas.vercel.app"}
+    assert c.post("/api/repos/octo/proj/proposals", json={"action": "create_readme", "content": "# x"},
+                  headers=headers).status_code == 201
+    headers["Origin"] = "https://evil.vercel.app"
+    assert c.post("/api/repos/octo/proj/proposals", json={"action": "create_readme", "content": "# x"},
+                  headers=headers).status_code == 403
+    assert c.get("/api/session", headers={"Host": "other.onrender.com"}).status_code == 400

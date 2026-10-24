@@ -68,7 +68,7 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
     web = config["web"]
     base = urlparse(web["baseUrl"])
     secure = base.scheme == "https"
-    allowed_hosts = {base.netloc, f"127.0.0.1:{web['port']}", f"localhost:{web['port']}"}
+    allowed_hosts = {base.netloc, f"127.0.0.1:{web['port']}", f"localhost:{web['port']}", *web["extraHosts"]}
     oauth = GitHubOAuth(config["github"]["clientId"], config["github"]["clientSecret"],
                         f"{web['baseUrl'].rstrip('/')}/auth/callback", http)
 
@@ -290,9 +290,9 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
 
     # ---------------------------------------------------------------- React SPA
 
-    dist = Path(web["clientDist"]).resolve()
-    index = dist / "index.html"
-    if index.is_file():
+    dist = Path(web["clientDist"]).resolve() if web["clientDist"] else None
+    index = dist / "index.html" if dist else None
+    if index and index.is_file():
         @app.get("/{rest:path}", include_in_schema=False)
         def spa(rest: str):
             if rest.startswith("auth/"):
@@ -305,6 +305,8 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
     else:
         @app.get("/", include_in_schema=False)
         def not_built():
+            if not dist:
+                return PlainTextResponse("SARVAS API is running. Open the web page at its own address.")
             return PlainTextResponse("Client not built. Run: npm --prefix client run build")
 
     # ---------------------------------------------------------------- errors
