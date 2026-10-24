@@ -1,5 +1,6 @@
 # Secrets and local state
 config.json
+!deploy/render/config.json
 .env
 .env.*
 !.env.example
@@ -7,10 +8,15 @@ config.json
 data/*
 !data/.gitkeep
 
-# Node
+# Node (client build)
 node_modules/
 client/dist/
 npm-debug.log*
+
+# Python (server)
+server/.venv/
+__pycache__/
+.pytest_cache/
 
 # Database
 *.db

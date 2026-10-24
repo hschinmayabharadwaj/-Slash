@@ -1,0 +1,16 @@
+# Build context is this folder (Render image and sandbox image).
+# Never send secrets or local state to a Docker build.
+.env
+.env.*
+config.json
+*.pem
+data/
+docs/
+
+# Build outputs and dependencies (rebuilt inside the image)
+**/node_modules/
+client/dist/
+agent/bin/
+server/.venv/
+**/__pycache__/
+**/.pytest_cache/

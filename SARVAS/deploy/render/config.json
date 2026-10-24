@@ -1,0 +1,32 @@
+{
+  "web": {
+    "host": "0.0.0.0",
+    "port": "${PORT}",
+    "baseUrl": "${RENDER_EXTERNAL_URL}",
+    "sessionHours": 8,
+    "dataDir": "./data",
+    "clientDist": "./client-dist"
+  },
+  "github": {
+    "clientId": "${GITHUB_CLIENT_ID}",
+    "clientSecret": "${GITHUB_CLIENT_SECRET}"
+  },
+  "agentService": {
+    "addr": "127.0.0.1:8766",
+    "url": "http://127.0.0.1:8766",
+    "token": "${AGENT_SERVICE_TOKEN}"
+  },
+  "ai": {
+    "provider": "gemini",
+    "apiKey": "${GEMINI_API_KEY}",
+    "model": "gemini-2.5-flash"
+  },
+  "security": {
+    "allowedUsers": "${SARVAS_ALLOWED_USERS}",
+    "allowedRepos": [],
+    "maxChangesPerHour": 10,
+    "maxDraftsPerHour": 20,
+    "maxReadmeChars": 50000,
+    "killSwitchFile": "./data/KILL_SWITCH"
+  }
+}

@@ -1,4 +1,4 @@
-// Thin client for the Node server's JSON API. Every mutation sends the
+// Thin client for the FastAPI server's JSON API. Every mutation sends the
 // per-session CSRF token; the session cookie is HttpOnly.
 let csrf = '';
 
