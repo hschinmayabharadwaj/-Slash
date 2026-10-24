@@ -397,7 +397,8 @@ class Database:
                 """,
                 (
                     TaskStatus.FAILED.value,
-                    "Interrupted by a restart. Nothing was pushed; please ask again.",
+                    "Interrupted by a restart. A branch or pull request may already exist; "
+                    "check GitHub before asking again.",
                     datetime.utcnow(),
                     *(s.value for s in IN_FLIGHT),
                 ),
