@@ -1,0 +1,15 @@
+{
+  "name": "sarvas-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Web backend: GitHub sign-in, sessions, and README actions for SARVAS",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test --test-reporter=spec test/"
+  },
+  "dependencies": {
+    "express": "5.1.0"
+  }
+}
