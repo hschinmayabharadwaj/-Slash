@@ -75,6 +75,8 @@ def main() -> None:
     def shutdown(*_):
         logger.info("Shutting down...")
         stop.set()
+        for thread in workers:
+            thread.join()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
