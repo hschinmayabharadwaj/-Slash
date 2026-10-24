@@ -1,66 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-.installed.cfg
-*.egg
-.mypy_cache/
-.ruff_cache/
-.tox/
-.hypothesis/
-
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
-
-# Testing / coverage
-.pytest_cache/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-*.cover
-
-# Packaging
-dist/
-build/
-*.egg-info/
-
-# Configuration and secrets
-config.yaml
-*.pem
+# Secrets and local state
+config.json
 .env
 .env.*
 !.env.example
+*.pem
+data/*
+!data/.gitkeep
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-data/*.db
-data/*.db-*
-data/work/
-data/KILL_SWITCH
+# Node
+node_modules/
+web/client/dist/
+npm-debug.log*
 
-# Logs
-*.log
-logs/
+# Go
+agent/bin/
 
 # OS / editors
 .DS_Store
-Thumbs.db
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
-
-# Temporary files
-tmp/
-temp/
-*.tmp
