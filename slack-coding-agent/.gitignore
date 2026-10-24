@@ -46,6 +46,7 @@ data/*.db
 data/*.db-*
 data/work/
 data/KILL_SWITCH
+data/web_secret.key
 
 # Logs
 *.log
