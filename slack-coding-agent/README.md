@@ -2,8 +2,8 @@
 
 A security-hardened AI coding agent that runs entirely on your own machine.
 You open a local web page and connect your GitHub account. Then you pick a
-repository and ask for a change. The agent shows you the exact diff first, and
-once you approve, it opens a pull request. It never pushes to your default
+repository and ask for a change. The page shows you the exact diff, and once
+you approve it, it opens a pull request. It never pushes to your default
 branch.
 
 For now the page supports two changes:
@@ -13,118 +13,132 @@ For now the page supports two changes:
 
 Both work only on repositories where GitHub confirms you have write access.
 
-## How it works
+## Architecture
 
 ```
- Browser ── http://localhost:8765 (loopback only)
-   │ 1. "Connect GitHub" → GitHub's consent screen → back with a code
-   ▼
- Web app (Flask + waitress)
-   │ 2. exchanges code for a user token (encrypted at rest, auto-refreshed)
-   │ 3. lists repos where the App is installed AND you have access
-   │ 4. you choose: add README (write it or "Draft with AI") / delete README
-   │ 5. authorize: allowlisted repo, not archived, GitHub says you can push
-   │ 6. PREVIEW: exact diff shown, nothing changed yet
-   │        ── you click Approve ──
-   │ 7. re-check repo is unchanged since preview → new branch → commit → PR
-   ▼
- GitHub ── pull request opened as you (with the App badge); you merge it
+ Browser (React SPA) ─── http://localhost:8765 ───► web/server (Node.js + Express)
+                                                      │  GitHub sign-in (GitHub App, OAuth web flow)
+                                                      │  encrypted sessions/tokens, proposals, audit (node:sqlite)
+                                                      │  README actions via the GitHub API, as YOU
+                                                      │
+                                                      │  repo facts + proposed content only
+                                                      │  (never your GitHub token), bearer-token auth
+                                                      ▼
+                                          agent/ agent-service (Go, 127.0.0.1:8766)
+                                                      │  AI README drafts (Gemini REST, or offline "sim")
+                                                      │  content checks (secret scan, size)
+                                                      ▼
+                                              Gemini API
+
+ agent/ agent-cli (Go) ── general plan → approve → implement → approve → PR pipeline
+        └── runs agent/ agent-runner (Go) inside a hardened Docker sandbox per step
 ```
 
-## Why a GitHub App (not a personal token or OAuth App)
-
-Signing in gives the page a **user-to-server token**. Its permissions are
-limited to what **both** the App was granted (*Contents* and *Pull requests*)
-**and** you can do yourself, and only on repos where you installed the App. A
-classic OAuth App would need the `repo` scope, which means full access to every
-private repo you can see. User-to-server tokens also expire after 8 hours.
+| Part | Stack | Why |
+|---|---|---|
+| `web/client` | React 19 + Vite | The page. No router or UI library; strict CSP, no inline scripts |
+| `web/server` | Node.js 22+ and Express 5 (its only runtime dependency) | GitHub OAuth, sessions and API. Storage and crypto use Node's built-ins (`node:sqlite`, `node:crypto`) |
+| `agent/` | Go, **standard library only** (zero third-party modules) | AI calls, guards, Docker sandbox, git and the pipeline. Builds to static binaries, so the sandbox image stays small |
 
 ## Safety controls
 
+**Web page**
+
 | Control | Where |
 |---|---|
-| Fixed list of allowed actions (add or delete README only); everything else is refused | `repo_actions.ACTIONS` |
-| Write access checked with GitHub for every action; optional repo allowlist | `repo_actions.authorize` |
-| Preview → approve. Approval applies the stored preview by ID and fingerprint, can only run once, and expires after 1 h | `web_store`, `webapp.approve` |
-| Repo re-checked at approval; refused if README changed since the preview | `repo_actions.apply` |
-| Changes go on a new branch with a PR, never to the default branch; branch is cleaned up on failure | `repo_actions.apply` |
-| Secret scan of README content; size limit | `guards.scan_secrets` |
-| Tokens encrypted at rest (Fernet; key file `0600`); DB stores only a hash of the session ID; session rotated at sign-in; token revoked at sign-out | `web_store`, `webapp` |
-| OAuth `state` checked in constant time; CSRF token and Origin check on every POST; HttpOnly SameSite cookie | `webapp` |
-| Loopback bind + Host-header check (blocks DNS rebinding); strict CSP, no JavaScript, no framing, `no-referrer` | `webapp` |
-| AI output is treated as untrusted: the prompt marks repo info as data, and the page escapes the output; you edit the draft before approving | `repo_actions.draft_readme` |
-| Per-user hourly limit; kill switch (`touch data/KILL_SWITCH`) | `security.*` |
-| Audit log of every sign-in, proposal, refusal, and approval (Activity page) | `audit_events` |
+| Fixed list of allowed actions (add or delete README only) | `web/server/src/actions.js` |
+| Write access checked with GitHub for every action; optional repo allowlist; archived repos refused | `actions.authorize` |
+| Preview → approve. Approval applies the stored preview by ID and fingerprint, can only run once, and expires after 1 h | `store.js`, `app.js` |
+| Repo re-checked at approval; refused if README changed since the preview | `actions.apply` |
+| New branch and PR only, never the default branch; the branch is deleted if anything fails | `actions.apply` |
+| GitHub App user-to-server tokens: limited to the App's permissions **and** yours, only on repos where the App is installed, expire after 8 h | `github.js` |
+| Tokens encrypted with AES-256-GCM; key file `0600`; DB stores only a hash of the session ID; session rotated at sign-in; token revoked at sign-out | `crypto.js`, `store.js` |
+| OAuth `state` compared in constant time; every mutation needs the CSRF header, a JSON body and a same-origin `Origin`; HttpOnly SameSite cookie | `app.js` |
+| Host-header allowlist (blocks DNS rebinding), loopback bind, strict CSP, `frame-ancestors 'none'`, `no-referrer` | `app.js` |
+| The Go service never sees GitHub tokens; it gets only repo facts and proposed content, behind a 32+ character bearer token, on loopback | `agentClient.js`, `internal/service` |
+| Secret scan of README content (fails closed if the service is down); per-user hourly limit; kill switch; audit log (Activity page) | |
+
+**Agent pipeline (`agent-cli`)**
+
+| Control | Where |
+|---|---|
+| Two human approvals: the plan, then the exact diff (SHA-256). The agent is never re-run after approval | `internal/pipeline` |
+| The agent can't run code. Its tools are list, read, write and delete, confined to the repo; `.git`, protected paths, symlink escapes and absolute paths are refused | `internal/runner` |
+| Containers: read-only root, `--cap-drop ALL`, `no-new-privileges`, pid/memory/CPU limits, timeout. Checks always run with `--network none` | `internal/sandbox` |
+| No GitHub credentials in containers. Installation tokens are scoped to one repo and passed via `GIT_CONFIG_*`, never in URLs or `.git/config` | `internal/github`, `internal/gitops` |
+| Policy limits (files, lines, size, symlinks, binaries, protected paths) and a secret scan, checked again before commit | `internal/guards` |
 
 ## Setup
 
+Prerequisites: Node.js ≥ 22.13, Go ≥ 1.23, git ≥ 2.31. Docker is needed only
+for `agent-cli`.
+
 1. **Create a GitHub App** (GitHub → Settings → Developer settings → GitHub Apps → New):
    - **Callback URL:** `http://localhost:8765/auth/callback`
-   - Leave *Expire user authorization tokens* **on**. Webhook: off.
+   - Keep *Expire user authorization tokens* **on**. Webhook: off.
    - **Repository permissions:** *Contents: Read and write*, *Pull requests: Read and write*.
-   - Create it, then **generate a client secret** and note the **Client ID**.
-   - **Install** the App on the repositories the agent may touch.
+   - Generate a **client secret** and note the **Client ID**, then **install** the App on your repos.
 
-2. **Install and configure:**
+2. **Configure:**
 
    ```bash
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -e ".[gemini]"          # drop [gemini] if you only use ai.provider: sim
-   cp config.yaml.example config.yaml
-   cp .env.example .env                # set GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET (+ GEMINI_API_KEY)
+   cp config.example.json config.json
+   cp .env.example .env        # fill in GITHUB_CLIENT_ID/SECRET, GEMINI_API_KEY, and:
+   openssl rand -hex 32        # → AGENT_SERVICE_TOKEN
    ```
 
-3. **Run:**
+   Set `"ai": {"provider": "sim"}` to try everything without an AI key.
+
+3. **Install, build, run:**
 
    ```bash
-   coding-agent                        # or: python -m slackagent.web
+   make install
+   set -a; source .env; set +a
+   make run                    # starts agent-service + web server
    ```
 
    Open <http://localhost:8765> and click **Connect GitHub**.
 
-Set `ai.provider: sim` to try everything without an AI key. "Draft with AI"
-then produces a template README from the repo's file list.
+**Development with hot reload:** run `make run-service` and `make run-web`,
+then `npm --prefix web/client run dev`. Set `web.baseUrl` (and the App's
+callback URL) to `http://localhost:5173`.
 
-## Other interfaces (optional)
-
-The repository also contains a more general agent that plans and makes
-free-form code changes. It runs in hardened Docker sandboxes with two human
-approvals, and you reach it from:
-
-- **CLI:** `slack-coding-agent-cli --repo ./my-project --task "add a --version flag"`
-  (needs Docker and `docker build -t slack-coding-agent-sandbox:latest .`)
-- **Slack:** `pip install -e ".[slack]"`, add a `slack:` section, then run
-  `python -m slackagent.main`
-
-This path is not connected to the web page yet; the page's actions are
-deliberately limited to the README operations.
-
-## Development
+## agent-cli (free-form changes, sandboxed)
 
 ```bash
-pip install -e ".[dev]"
-pytest
+make sandbox-image
+./agent/bin/agent-cli -config config.json -repo ./my-project -task "add a --version flag"
+./agent/bin/agent-cli -config config.json -repo owner/name  -task "fix the README typo"   # needs github.appId etc.
 ```
 
-The web tests run against an in-memory fake of the GitHub API, and the
-pipeline tests use real git with a local bare repo. No network or credentials
-are needed.
+For a local checkout, the CLI pushes the result as a new branch into that
+repo. For GitHub repos, it opens a pull request. Lint and test commands come
+only from `repos.<owner/name>` in `config.json` and run network-less. Add the
+toolchains they need to the sandbox image.
 
-## Project layout
+## Tests
+
+```bash
+make test        # go vet + go test ./... and the Node server tests
+```
+
+The Go pipeline tests use real git with a bare local origin, plus a fake
+sandbox and target. The Node tests run the Express app against an in-memory
+fake of the GitHub API. Neither needs network access or credentials.
+
+## Layout
 
 ```
-src/slackagent/
-  web.py            web entry point (primary)
-  webapp.py         routes, sessions, CSRF/Host/CSP protections
-  github_user.py    GitHub OAuth web flow + API calls as the signed-in user
-  repo_actions.py   allowed actions: authorize → propose → apply; AI README draft
-  web_store.py      encrypted sessions/tokens, pending proposals
-  templates/        HTML pages (server-rendered, no JS)
-  database.py       SQLite task store + audit log
-  config.py         configuration
-  guards.py         secret scan, sanitizing, kill switch
-  # general agent (CLI / Slack, Docker sandbox):
-  cli.py  main.py  slack_handler.py  worker.py  agent_runner.py  sandbox.py  github_ops.py
+agent/                        Go module (stdlib only)
+  cmd/agent-service/          localhost service for the web server
+  cmd/agent-runner/           in-sandbox agent
+  cmd/agent-cli/              terminal pipeline
+  internal/{ai,config,guards,gitops,github,runner,sandbox,pipeline,service}
+web/server/                   Node.js + Express (src/, test/)
+web/client/                   React + Vite (src/pages/)
+config.example.json           shared by Go and Node
+Dockerfile                    sandbox image (builds agent-runner)
+Makefile
 ```
 
 ## License

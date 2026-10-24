@@ -1,4 +1,2 @@
 *
-!src/slackagent/**
-**/__pycache__
-**/*.pyc
+!agent/**
