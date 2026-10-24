@@ -1,4 +1,4 @@
-// Package service is the small HTTP service the Node web server calls for
+// Package service is the small HTTP service the FastAPI web server calls for
 // AI work and content checks. It never receives a user's GitHub token: the
 // web server sends only repository facts and proposed content.
 //

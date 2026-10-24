@@ -1,4 +1,4 @@
-// Package config loads the shared config.json (also read by the Node web
+// Package config loads the shared config.json (also read by the FastAPI web
 // server). String values may reference environment variables as ${NAME}.
 package config
 
