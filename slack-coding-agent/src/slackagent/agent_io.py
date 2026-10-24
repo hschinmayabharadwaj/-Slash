@@ -27,8 +27,8 @@ def write_input(io_dir: Path, payload: Dict[str, Any]) -> None:
     io_dir.mkdir(parents=True, exist_ok=True)
     (io_dir / "output.json").unlink(missing_ok=True)
     (io_dir / "input.json").write_text(json.dumps(payload, indent=2))
-    # The container runs as the host user, but make sure it can always write output
-    io_dir.chmod(0o777)
+    # The container runs as the host user, so owner-only access is enough
+    io_dir.chmod(0o700)
 
 
 def read_output(io_dir: Path, result: Any) -> Dict[str, Any]:

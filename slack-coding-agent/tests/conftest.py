@@ -4,16 +4,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "lambda"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import json
 import subprocess
-import tempfile
-from typing import Any, Dict
 
 import pytest
 
-from slackagent.config import Config, load_config
+from slackagent.config import load_config
 from slackagent.sandbox import SandboxResult
 
 
@@ -143,7 +141,7 @@ def origin_repo(tmp_path) -> Path:
 
 
 class FakeSlackHandler:
-    """Fake Slack handler for testing."""
+    """Fake notifier (stands in for SlackHandler) for testing."""
     
     def __init__(self):
         self.posts = []
@@ -152,11 +150,14 @@ class FakeSlackHandler:
         self.prs = []
         self.errors = []
     
-    def post_plan(self, task_id: int, plan_summary: str):
-        self.plans.append((task_id, plan_summary))
+    def say(self, task, text: str):
+        self.posts.append((task.id, text))
     
-    def post_implementation(self, task_id: int, summary: str, diff: str):
-        self.implementations.append((task_id, summary, diff))
+    def post_plan(self, task_id: int, plan: dict):
+        self.plans.append((task_id, plan))
+    
+    def post_implementation(self, task_id: int, summary: str, diff: str, checks_report: str = ""):
+        self.implementations.append((task_id, summary, diff, checks_report))
     
     def post_pr_created(self, task_id: int, pr_url: str):
         self.prs.append((task_id, pr_url))
@@ -182,6 +183,9 @@ class FakeGitHubClient:
     
     def get_clone_url(self, owner: str, name: str) -> str:
         return str(self.origin)
+    
+    def git_auth_env(self, owner: str, name: str) -> dict:
+        return {}
     
     def create_pull_request(self, repo_owner, repo_name, head_branch, title, body, base_branch="main"):
         self.prs.append({"head": head_branch, "base": base_branch, "title": title, "body": body})
@@ -216,15 +220,16 @@ class FakeSandbox:
         io_dir.mkdir(parents=True, exist_ok=True)
         
         if mode == "plan":
-            output = {"ok": True, "text": json.dumps(self.plan), "plan": self.plan, "cost_usd": 0.1, "num_turns": 1}
+            output = {"ok": True, "text": json.dumps(self.plan), "plan": self.plan, "tokens_used": 10, "num_turns": 1}
         else:
             self.edit_func(Path(repo_dir))
-            output = {"ok": True, "text": "Made changes", "cost_usd": 0.2, "num_turns": 3}
+            output = {"ok": True, "text": "Made changes", "tokens_used": 20, "num_turns": 3}
         
         (io_dir / "output.json").write_text(json.dumps(output))
         return SandboxResult(0, False, "", "")
     
     def run_checks(self, *, repo_dir, image, command, timeout_s):
+        self.runs.append({"mode": "checks", "command": command})
         return SandboxResult(self.checks_rc, False, "test output", "")
 
 

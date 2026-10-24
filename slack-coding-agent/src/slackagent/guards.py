@@ -1,4 +1,4 @@
-"""Deterministic guardrails for Gemini-based agent. These run in plain code, outside the model's control.
+"""Deterministic guardrails. These run in plain code on the host, outside the model's control.
 
 The agent proposes; these checks (plus CI and human review) decide.
 """

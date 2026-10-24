@@ -1,339 +1,472 @@
-"""Worker process for executing tasks."""
+"""Task pipeline: plan -> human approval -> implement -> verify -> human approval -> PR.
 
+    PENDING --plan--> AWAITING_PLAN_APPROVAL --approve--> PLAN_APPROVED
+      --implement + verify--> AWAITING_IMPL_APPROVAL --approve--> IMPL_APPROVED
+      --apply approved diff, re-verify, push, open PR--> COMPLETED
+
+The agent only ever proposes. Everything that decides -- policy limits, secret
+scanning, protected paths, trusted checks, and both human approvals -- runs
+here, in plain code outside the model's control. The PR contains exactly the
+diff the approver saw (checked by SHA-256); the agent is never re-run after
+approval.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
 import logging
+import secrets
 import shutil
-import tempfile
-import time
+import threading
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional, Protocol
 
-from .agent_runner import AgentRunner, format_check_results
+from . import guards
+from .agent_io import AgentError, read_output, write_input
 from .config import Config
 from .database import Database, Task, TaskStatus
-from .github_ops import GitHubClient, GitOperations, GitHubOperationError
-from .security import SecurityManager
+from .github_ops import GitHubAuthError, GitHubClient, GitHubOperationError, GitOperations
+from .gitutil import GitError
+from .sandbox import DockerSandbox
 
 logger = logging.getLogger(__name__)
 
 
+class Notifier(Protocol):
+    """Where the worker reports progress (Slack, or the console in CLI mode)."""
+
+    def say(self, task: Task, text: str) -> None: ...
+    def post_plan(self, task_id: int, plan: Dict[str, Any]) -> None: ...
+    def post_implementation(self, task_id: int, summary: str, diff_preview: str, checks_report: str = "") -> None: ...
+    def post_pr_created(self, task_id: int, pr_url: str) -> None: ...
+
+
+class TaskAbort(Exception):
+    """Expected stop with a user-friendly message."""
+
+    def __init__(self, message: str, status: str = "failed"):
+        super().__init__(message)
+        self.status = status
+
+
+class TaskSuperseded(Exception):
+    """The task changed state underneath us (e.g. cancelled). Stop quietly."""
+
+
+def sha256(text: str) -> str:
+    return hashlib.sha256((text or "").encode()).hexdigest()
+
+
 class Worker:
-    """Background worker for processing tasks."""
+    """Processes tasks from the local SQLite queue."""
 
     def __init__(
         self,
         config: Config,
         database: Database,
-        slack_handler: "SlackHandler",
+        notifier: Notifier,
         worker_id: Optional[str] = None,
+        github: Optional[GitHubClient] = None,
+        sandbox: Optional[DockerSandbox] = None,
     ):
-        """Initialize worker.
-
-        Args:
-            config: Application configuration
-            database: Database instance
-            slack_handler: Slack handler for notifications
-            worker_id: Optional worker identifier
-        """
         self.config = config
         self.database = database
-        self.slack_handler = slack_handler
-        self.worker_id = worker_id or str(uuid.uuid4())[:8]
-
-        # Initialize clients
-        self.github_client = GitHubClient(config.github)
-        self.security_manager = SecurityManager(config.security)
-        self.agent_runner = AgentRunner(
-            config.agent,
+        self.notifier = notifier
+        self.worker_id = worker_id or uuid.uuid4().hex[:8]
+        self.github = github or GitHubClient(config.github)
+        self.sandbox = sandbox or DockerSandbox(
             config.docker,
-            self.security_manager,
-            config.gemini.api_key,
+            network_mode=config.security.network_mode,
+            agent_network=config.security.agent_network,
+            ai_provider=config.ai.provider,
         )
+        logger.info("Worker %s initialized (ai=%s)", self.worker_id, config.ai.provider)
 
-        logger.info(f"Worker {self.worker_id} initialized")
+    # ------------------------------------------------------------------ loop
 
-    def run(self) -> None:
-        """Run worker loop."""
-        logger.info(f"Worker {self.worker_id} starting")
-
-        while True:
+    def run_forever(self, stop: threading.Event, poll_s: Optional[float] = None) -> None:
+        """Process tasks until ``stop`` is set."""
+        poll_s = poll_s or self.config.worker.poll_interval
+        logger.info("Worker %s starting", self.worker_id)
+        while not stop.is_set():
+            if guards.kill_switch_on(self.config):
+                logger.warning("Kill switch active, worker paused")
+                stop.wait(poll_s)
+                continue
             try:
-                # Get pending tasks
-                tasks = self.database.get_pending_tasks(limit=1)
+                did_work = self.process_one()
+            except Exception:
+                logger.exception("worker loop error")
+                did_work = False
+            if not did_work:
+                stop.wait(poll_s)
 
-                if not tasks:
-                    # No tasks, sleep and retry
-                    time.sleep(self.config.worker.poll_interval)
-                    continue
+    def process_one(self) -> bool:
+        """Advance one task by one phase. Returns False if there was nothing to do."""
+        for candidate in self.database.get_pending_tasks(limit=5):
+            if self.database.claim_task(candidate.id, self.worker_id):
+                break
+        else:
+            return False
 
-                task = tasks[0]
+        task = self.database.get_task(candidate.id)
+        try:
+            if task.status == TaskStatus.PENDING:
+                self._process_planning(task)
+            elif task.status == TaskStatus.PLAN_APPROVED:
+                self._process_implementation(task)
+            elif task.status == TaskStatus.IMPL_APPROVED:
+                self._process_pr_creation(task)
+        except TaskSuperseded:
+            logger.info("Task %s changed state while running; stopping", task.id)
+        except TaskAbort as e:
+            self._end_task(task, str(e), e.status)
+        except AgentError as e:
+            self._end_task(task, str(e), "failed")
+        except (GitError, GitHubOperationError, GitHubAuthError) as e:
+            logger.error("Git/GitHub error on task %s: %s", task.id, e)
+            self._end_task(
+                task,
+                "I hit a problem talking to git/GitHub. Nothing was merged. Please try again.",
+                "failed",
+            )
+        except Exception:
+            logger.exception("Task %s crashed", task.id)
+            self._end_task(
+                task,
+                f"Something went wrong on my side (task #{task.id}). Nothing was merged.",
+                "failed",
+            )
+        finally:
+            self.database.release_task(task.id)
+        return True
 
-                # Try to claim the task
-                if not self.database.claim_task(task.id, self.worker_id):
-                    # Task already claimed by another worker
-                    continue
-
-                logger.info(f"Worker {self.worker_id} processing task {task.id}")
-
-                # Process the task based on current status
-                try:
-                    if task.status == TaskStatus.PENDING:
-                        self._process_planning(task)
-                    elif task.status == TaskStatus.PLAN_APPROVED:
-                        self._process_implementation(task)
-                    elif task.status == TaskStatus.IMPL_APPROVED:
-                        self._process_pr_creation(task)
-                except Exception as e:
-                    logger.error(
-                        f"Worker {self.worker_id} failed to process task {task.id}: {e}",
-                        exc_info=True,
-                    )
-                    self._handle_task_failure(task, str(e))
-                finally:
-                    # Release the task
-                    self.database.release_task(task.id)
-
-            except Exception as e:
-                logger.error(f"Worker {self.worker_id} error: {e}", exc_info=True)
-                time.sleep(self.config.worker.poll_interval)
+    # ------------------------------------------------------------------ PLANNING
 
     def _process_planning(self, task: Task) -> None:
-        """Process planning phase.
+        tid = task.id
+        self._advance(task, TaskStatus.PENDING, TaskStatus.PLANNING)
+        self._check_repo_allowed(task)
+        self.notifier.say(task, ":mag: Reading the code and drafting a plan...")
 
-        Args:
-            task: Task to process
-        """
-        logger.info(f"Planning phase for task {task.id}")
-        self.database.update_task_status(task.id, TaskStatus.PLANNING)
+        work_dir = self._fresh_work_dir(tid)
+        try:
+            repo_dir = work_dir / "repo"
+            self._clone(task, repo_dir)
 
-        # Create temporary working directory
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workdir = Path(tmpdir) / "repo"
+            io_dir = work_dir / "io"
+            write_input(io_dir, self._agent_input(task, "plan"))
+            result = self.sandbox.run_agent(
+                mode="plan",
+                repo_dir=repo_dir,
+                io_dir=io_dir,
+                image=self.config.docker.image,
+                timeout_s=self.config.agent.plan_timeout_s,
+                api_key=self._api_key(),
+            )
+            output = read_output(io_dir, result)
+            plan = self._normalize_plan(output.get("plan"))
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
-            try:
-                # Clone repository
-                clone_url = self.github_client.get_clone_url(
-                    task.repo_owner, task.repo_name
-                )
-                GitOperations.clone_repository(clone_url, workdir)
+        self.database.record_event(tid, "plan_generated", "agent", {
+            "risk": plan["risk"], "files": plan["files"],
+            "tokens": output.get("tokens_used"), "provider": output.get("provider"),
+        })
 
-                # Run planning phase
-                plan = self.agent_runner.run_planning_phase(
-                    workdir, task.task_description
-                )
+        if not plan["feasible"] or plan["questions"]:
+            lines = [":thinking_face: I can't start on this yet.", guards.escape_slack(plan["summary"])]
+            lines += [f"• {guards.escape_slack(q)}" for q in plan["questions"]]
+            lines.append("Reply with more detail and tag me again.")
+            raise TaskAbort("\n".join(lines), "needs_info")
 
-                # Save plan
-                self.database.update_task_plan(task.id, plan)
-                self.database.update_task_status(
-                    task.id, TaskStatus.AWAITING_PLAN_APPROVAL
-                )
+        protected = [f for f in plan["files"] if guards.matches_any(f, self._deny(task))]
+        if plan["risk"] == "high" or protected:
+            why = "it touches protected files" if protected else guards.escape_slack(plan["risk_reason"])
+            raise TaskAbort(f":no_entry: I won't make this change myself ({why}). Please ask an engineer.", "declined")
 
-                # Post plan to Slack
-                self.slack_handler.post_plan(task.id, plan)
+        self.database.update_task_plan(tid, json.dumps(plan))
+        self._advance(task, TaskStatus.PLANNING, TaskStatus.AWAITING_PLAN_APPROVAL)
+        if not self.config.security.require_approval:
+            self._auto_approve(task, TaskStatus.AWAITING_PLAN_APPROVAL, TaskStatus.PLAN_APPROVED)
+            return
+        self.notifier.post_plan(tid, plan)
 
-                logger.info(f"Planning phase complete for task {task.id}")
+    def _normalize_plan(self, raw: Any) -> Dict[str, Any]:
+        """Validate the agent's plan JSON and clamp every field."""
+        if not isinstance(raw, dict):
+            raise TaskAbort("Couldn't produce a clear plan. Try rephrasing with more detail.")
+        if "feasible" not in raw:
+            raise TaskAbort("Plan missing required field 'feasible'. Try rephrasing with more detail.")
+        risk = raw.get("risk") if raw.get("risk") in ("low", "medium", "high") else "medium"
+        files = raw.get("files") if isinstance(raw.get("files"), list) else []
+        questions = raw.get("questions") if isinstance(raw.get("questions"), list) else []
+        return {
+            "feasible": raw.get("feasible") is True,
+            "summary": str(raw.get("summary") or "").strip()[:1500],
+            "files": [str(f) for f in files][:20],
+            "risk": risk,
+            "risk_reason": str(raw.get("risk_reason") or "").strip()[:300],
+            "questions": [str(q).strip() for q in questions if str(q).strip()][:5],
+            "how_to_verify": str(raw.get("how_to_verify") or "").strip()[:600],
+        }
 
-            except Exception as e:
-                raise Exception(f"Planning failed: {e}")
+    # ------------------------------------------------------------------ IMPLEMENTATION
 
     def _process_implementation(self, task: Task) -> None:
-        """Process implementation phase.
+        tid = task.id
+        self._advance(task, TaskStatus.PLAN_APPROVED, TaskStatus.IMPLEMENTING)
+        self._check_repo_allowed(task)
+        plan = json.loads(task.plan or "{}")
+        self.notifier.say(task, ":hammer_and_wrench: Approved. Working on the change now...")
 
-        Args:
-            task: Task to process
-        """
-        logger.info(f"Implementation phase for task {task.id}")
-        self.database.update_task_status(task.id, TaskStatus.IMPLEMENTING)
+        branch = f"agent/{tid}-{guards.slugify(plan.get('summary', 'change'), 30)}-{secrets.token_hex(2)}"
+        self.database.update_task_branch(tid, branch)
 
-        # Create temporary working directory
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workdir = Path(tmpdir) / "repo"
+        work_dir = self._fresh_work_dir(tid)
+        try:
+            repo_dir = work_dir / "repo"
+            self._clone(task, repo_dir)
 
-            try:
-                # Clone repository
-                clone_url = self.github_client.get_clone_url(
-                    task.repo_owner, task.repo_name
-                )
-                GitOperations.clone_repository(clone_url, workdir)
+            io_dir = work_dir / "io"
+            write_input(io_dir, self._agent_input(task, "implement", plan))
+            result = self.sandbox.run_agent(
+                mode="implement",
+                repo_dir=repo_dir,
+                io_dir=io_dir,
+                image=self.config.docker.image,
+                timeout_s=self.config.agent.implement_timeout_s,
+                api_key=self._api_key(),
+            )
+            output = read_output(io_dir, result)
 
-                # Create new branch
-                GitOperations.create_branch(workdir, task.branch_name)
+            # Verify on the host -- never trust the sandbox's own account.
+            self._advance(task, TaskStatus.IMPLEMENTING, TaskStatus.VERIFYING)
+            report = guards.inspect_worktree(repo_dir)
+            if not report.files:
+                note = guards.escape_slack(guards.tail(output.get("text", ""), 600))
+                raise TaskAbort(f"I didn't end up changing any files.\n{note}".strip())
+            self._enforce_policy(task, repo_dir, report)
 
-                # Run implementation phase
-                summary = self.agent_runner.run_implementation_phase(
-                    workdir, task.task_description, task.plan or ""
-                )
+            diff = GitOperations.get_diff(repo_dir, cached=True)
+            checks_ok, checks_report = self._run_checks(task, repo_dir)
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
-                # Check if there are changes
-                if not GitOperations.has_changes(workdir):
-                    raise Exception("No changes were made by the agent")
+        self.database.record_event(tid, "implementation_verified", "worker", {
+            "files": [f.path for f in report.files],
+            "lines": report.total_changed,
+            "checks_ok": checks_ok,
+            "diff_sha256": sha256(diff),
+        })
+        if not checks_ok and self.config.security.block_on_failed_checks:
+            raise TaskAbort(
+                ":x: The change broke the repository's checks, so I stopped before opening a PR.\n"
+                f"```{guards.tail(checks_report, 1500)}```"
+            )
 
-                # Stage changes and get diff
-                GitOperations.commit_changes(
-                    workdir,
-                    f"Implement: {task.task_description[:50]}",
-                )
-                diff = GitOperations.get_diff(workdir, cached=True)
+        summary = guards.tail(output.get("text", "Changes made."), 2000)
+        self.database.update_task_implementation(tid, summary, diff, sha256(diff), checks_report)
+        self._advance(task, TaskStatus.VERIFYING, TaskStatus.AWAITING_IMPL_APPROVAL)
+        if not self.config.security.require_approval:
+            self._auto_approve(task, TaskStatus.AWAITING_IMPL_APPROVAL, TaskStatus.IMPL_APPROVED)
+            return
+        preview = diff if len(diff) <= 2500 else diff[:2500] + "\n... (truncated)"
+        self.notifier.post_implementation(tid, summary, preview, checks_report)
 
-                # Security: Scan diff for secrets
-                secret_warning = self.security_manager.scan_diff_for_secrets(diff)
-                if secret_warning:
-                    raise Exception(f"Security check failed:\n{secret_warning}")
+    def _enforce_policy(self, task: Task, repo_dir: Path, report: guards.DiffReport) -> None:
+        """Deterministic limits on what the change may contain."""
+        sec = self.config.security
+        repo_cfg = self.config.repo(self._full_name(task))
+        problems: List[str] = guards.check_policy(
+            report,
+            max_files=repo_cfg.max_files_override or sec.max_files,
+            max_changed_lines=repo_cfg.max_lines_override or sec.max_changed_lines,
+            deny_patterns=self._deny(task),
+        )
+        limit = sec.max_file_size_mb * 1024 * 1024
+        for change in report.files:
+            path = repo_dir / change.path
+            if path.is_file() and path.stat().st_size > limit:
+                problems.append(f"`{change.path}` is larger than {sec.max_file_size_mb} MB")
+        if sec.scan_secrets:
+            problems += guards.scan_secrets(report.added_lines)
+        if problems:
+            self.database.record_event(task.id, "policy_blocked", "worker", {"problems": problems})
+            raise TaskAbort(
+                ":no_entry: I stopped without opening a PR because:\n"
+                + "\n".join(f"• {p}" for p in problems)
+                + "\nTry a smaller, more specific request.",
+                "declined",
+            )
 
-                # Run checks
-                check_results = self.agent_runner.run_checks(workdir)
-                check_summary = format_check_results(check_results)
+    def _run_checks(self, task: Task, repo_dir: Path) -> "tuple[bool, str]":
+        """Run the repo's configured lint/test commands (network off)."""
+        repo_cfg = self.config.repo(self._full_name(task))
+        commands = [c for c in (repo_cfg.lint_command, repo_cfg.test_command) if c]
+        if not commands:
+            return True, "No checks configured for this repository."
+        ok, lines = True, []
+        for command in commands:
+            result = self.sandbox.run_checks(
+                repo_dir=repo_dir,
+                image=self.config.docker.image,
+                command=command,
+                timeout_s=self.config.agent.check_timeout_s,
+            )
+            if result.timed_out:
+                status = f"timed out after {self.config.agent.check_timeout_s}s"
+            else:
+                status = "passed" if result.returncode == 0 else f"failed (exit {result.returncode})"
+            ok = ok and result.returncode == 0 and not result.timed_out
+            output = guards.tail(f"{result.stdout}\n{result.stderr}", 1200)
+            lines.append(f"$ {command}\n{status}\n{output}")
+        return ok, "\n\n".join(lines)
 
-                # Save implementation results
-                full_summary = f"{summary}\n\n**Checks:**\n{check_summary}"
-                self.database.update_task_implementation(
-                    task.id, full_summary, diff
-                )
-                self.database.update_task_status(
-                    task.id, TaskStatus.AWAITING_IMPL_APPROVAL
-                )
-
-                # Truncate diff for Slack display
-                diff_preview = diff[:1000] + "\n... (truncated)" if len(diff) > 1000 else diff
-
-                # Post implementation to Slack
-                self.slack_handler.post_implementation(
-                    task.id, full_summary, diff_preview
-                )
-
-                logger.info(f"Implementation phase complete for task {task.id}")
-
-            except Exception as e:
-                raise Exception(f"Implementation failed: {e}")
+    # ------------------------------------------------------------------ PR CREATION
 
     def _process_pr_creation(self, task: Task) -> None:
-        """Process PR creation.
+        tid = task.id
+        self._advance(task, TaskStatus.IMPL_APPROVED, TaskStatus.CREATING_PR)
+        self._check_repo_allowed(task)
+        plan = json.loads(task.plan or "{}")
 
-        Args:
-            task: Task to process
-        """
-        logger.info(f"Creating PR for task {task.id}")
-        self.database.update_task_status(task.id, TaskStatus.CREATING_PR)
+        diff = task.diff or ""
+        if not diff.strip():
+            raise TaskAbort("There is no approved change to open a PR with.")
+        if not task.diff_sha256 or sha256(diff) != task.diff_sha256:
+            raise TaskAbort(":no_entry: The stored change doesn't match what was approved. Stopping.", "declined")
 
-        # Create temporary working directory
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workdir = Path(tmpdir) / "repo"
+        work_dir = self._fresh_work_dir(tid)
+        try:
+            repo_dir = work_dir / "repo"
+            self._clone(task, repo_dir)
+            GitOperations.create_branch(repo_dir, task.branch_name)
+            GitOperations.apply_patch(repo_dir, diff)
 
-            try:
-                # Clone repository
-                clone_url = self.github_client.get_clone_url(
-                    task.repo_owner, task.repo_name
-                )
-                GitOperations.clone_repository(clone_url, workdir)
+            # Defense in depth: re-check exactly what is about to be committed.
+            report = guards.inspect_worktree(repo_dir)
+            if not report.files:
+                raise TaskAbort("No changes to commit.")
+            self._enforce_policy(task, repo_dir, report)
 
-                # Create and checkout branch
-                GitOperations.create_branch(workdir, task.branch_name)
+            GitOperations.commit_changes(
+                repo_dir,
+                f"{plan.get('summary', task.task_description)[:72]}\n\nBot task #{tid}",
+                author_name=self.config.github.commit_author_name,
+                author_email=self.config.github.commit_author_email,
+            )
+            GitOperations.push_branch(repo_dir, task.branch_name, env=self._git_env(task))
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
-                # Re-apply changes (we need to recreate them)
-                # In a production system, you'd save the changes and reapply them
-                # For now, we'll run implementation again
-                summary = self.agent_runner.run_implementation_phase(
-                    workdir, task.task_description, task.plan or ""
-                )
-
-                if not GitOperations.has_changes(workdir):
-                    raise Exception("No changes to commit")
-
-                # Commit changes
-                commit_message = f"{task.task_description}\n\nTask ID: {task.id}"
-                GitOperations.commit_changes(workdir, commit_message)
-
-                # Push branch
-                GitOperations.push_branch(workdir, task.branch_name)
-
-                # Create PR
-                pr_title = task.task_description[:70]
-                pr_body = f"""## Task Description
-
-{task.task_description}
-
-## Implementation Plan
-
-{task.plan or 'N/A'}
-
-## Summary
-
-{task.implementation_summary or 'N/A'}
-
----
-_This PR was created automatically by Slack Coding Agent (Task #{task.id})_
-"""
-
-                pr_url = self.github_client.create_pull_request(
-                    task.repo_owner,
-                    task.repo_name,
-                    task.branch_name,
-                    pr_title,
-                    pr_body,
-                )
-
-                # Save PR URL
-                self.database.update_task_pr(task.id, pr_url)
-                self.database.update_task_status(task.id, TaskStatus.COMPLETED)
-
-                # Post PR to Slack
-                self.slack_handler.post_pr_created(task.id, pr_url)
-
-                logger.info(f"PR created for task {task.id}: {pr_url}")
-
-            except Exception as e:
-                raise Exception(f"PR creation failed: {e}")
-
-    def _handle_task_failure(self, task: Task, error_message: str) -> None:
-        """Handle task failure.
-
-        Args:
-            task: Failed task
-            error_message: Error message
-        """
-        logger.error(f"Task {task.id} failed: {error_message}")
-
-        # Update task status
-        self.database.update_task_status(
-            task.id, TaskStatus.FAILED, error_message=error_message
+        title = guards.neutralize_github_mentions(
+            f"[bot] {plan.get('summary', task.task_description)}"[:90]
         )
+        pr_url = self.github.create_pull_request(
+            task.repo_owner,
+            task.repo_name,
+            task.branch_name,
+            title,
+            self._build_pr_body(task, plan),
+            base_branch=self._base_branch(task),
+        )
+        self.database.update_task_pr(tid, pr_url)
+        self._advance(task, TaskStatus.CREATING_PR, TaskStatus.COMPLETED)
+        self.database.record_event(tid, "pr_created", "worker", {"url": pr_url, "branch": task.branch_name})
+        self.notifier.post_pr_created(tid, pr_url)
 
-        # Post error to Slack
-        self.slack_handler.post_error(task.id, error_message)
+    def _build_pr_body(self, task: Task, plan: Dict[str, Any]) -> str:
+        """PR description; all model/user text is neutralized for @-mentions."""
+        safe = guards.neutralize_github_mentions
+        lines = [
+            "## Summary",
+            safe(plan.get("summary", "")),
+            "",
+            "## How to verify",
+            safe(plan.get("how_to_verify") or "See the changes."),
+            "",
+            "## Checks",
+            "```",
+            guards.tail(task.checks_report or "Not run.", 3000),
+            "```",
+            "",
+            f"**Request:** {safe(task.task_description)}",
+            f"**Risk:** {plan.get('risk', 'medium')}",
+            f"**Bot task:** #{task.id} (plan and diff approved by a human in Slack)",
+        ]
+        return "\n".join(lines)
 
+    # ------------------------------------------------------------------ helpers
 
-def main() -> None:
-    """Main entry point for worker process."""
-    import sys
+    def _agent_input(self, task: Task, mode: str, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        agent = self.config.agent
+        payload: Dict[str, Any] = {
+            "request": guards.sanitize_untrusted(
+                task.task_description, self.config.security.max_request_chars
+            ),
+            "mode": mode,
+            "provider": self.config.ai.provider,
+            "model": self.config.ai.model,
+            "max_turns": agent.max_turns,
+            "token_budget": agent.planning_budget if mode == "plan" else agent.implementation_budget,
+            "deny_patterns": self._deny(task),
+            "max_file_bytes": self.config.security.max_file_size_mb * 1024 * 1024,
+        }
+        if plan is not None:
+            payload["plan"] = plan
+        return payload
 
-    from .config import load_config
+    def _api_key(self) -> str:
+        return self.config.ai.api_key if self.config.ai.provider == "gemini" else ""
 
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    def _clone(self, task: Task, dest: Path) -> None:
+        url = self.github.get_clone_url(task.repo_owner, task.repo_name)
+        GitOperations.clone_repository(url, dest, branch=self._base_branch(task), env=self._git_env(task))
 
-    # Load configuration
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        logger.error(f"Failed to load configuration: {e}")
-        sys.exit(1)
+    def _git_env(self, task: Task) -> Dict[str, str]:
+        auth = getattr(self.github, "git_auth_env", None)
+        return auth(task.repo_owner, task.repo_name) if auth else {}
 
-    # Initialize database
-    database = Database(config.database.path)
+    def _full_name(self, task: Task) -> str:
+        return f"{task.repo_owner}/{task.repo_name}"
 
-    # Initialize Slack handler (for posting updates)
-    from .slack_handler import SlackHandler
+    def _deny(self, task: Task) -> List[str]:
+        return self.config.deny_for(self._full_name(task))
 
-    slack_handler = SlackHandler(config, database)
+    def _base_branch(self, task: Task) -> str:
+        return self.config.repo(self._full_name(task)).default_branch
 
-    # Create and run worker
-    worker = Worker(config, database, slack_handler)
-    worker.run()
+    def _check_repo_allowed(self, task: Task) -> None:
+        if not self.config.repo_allowed(self._full_name(task)):
+            raise TaskAbort(f"I'm not allowed to work on `{self._full_name(task)}`.", "declined")
 
+    def _advance(self, task: Task, expected: TaskStatus, new: TaskStatus) -> None:
+        if not self.database.transition_status(task.id, expected, new):
+            raise TaskSuperseded()
+        task.status = new
 
-if __name__ == "__main__":
-    main()
+    def _auto_approve(self, task: Task, expected: TaskStatus, new: TaskStatus) -> None:
+        """Only when security.require_approval is false (not recommended)."""
+        self._advance(task, expected, new)
+        self.database.record_event(task.id, f"auto_{new.value}", "config", {})
+
+    def _work_dir(self, task_id: int) -> Path:
+        return Path(self.config.database.path).resolve().parent / "work" / f"task-{task_id}"
+
+    def _fresh_work_dir(self, task_id: int) -> Path:
+        work_dir = self._work_dir(task_id)
+        shutil.rmtree(work_dir, ignore_errors=True)
+        work_dir.mkdir(parents=True, mode=0o700)
+        return work_dir
+
+    def _end_task(self, task: Task, message: str, status: str) -> None:
+        """Mark the task finished (failed/declined/needs_info) and tell the user."""
+        new = TaskStatus[status.upper()] if status.upper() in TaskStatus.__members__ else TaskStatus.FAILED
+        current = self.database.get_task(task.id)
+        if current and current.status in (TaskStatus.CANCELLED, TaskStatus.COMPLETED):
+            return
+        self.database.update_task_status(task.id, new, error_message=message)
+        self.database.record_event(task.id, new.value, "worker", {"message": message[:500]})
+        self.notifier.say(task, message)

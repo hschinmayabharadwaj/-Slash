@@ -5,14 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "slack-coding-agent"
 version = "0.1.0"
-description = "A security-hardened Slack bot for coding assistance with Google Gemini AI"
+description = "A security-hardened, fully local AI coding agent: connect GitHub in a web page, preview and approve changes, get pull requests"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-authors = [
-    {name = "Your Name", email = "you@example.com"}
-]
-keywords = ["slack", "claude", "ai", "coding", "github", "automation"]
+keywords = ["github", "gemini", "ai", "coding", "github", "automation", "sandbox"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,8 +22,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "slack-bolt>=1.18.0",
-    "google-generativeai>=0.3.0",
+    "flask>=3.0",
+    "waitress>=3.0",
     "PyJWT>=2.8.0",
     "cryptography>=41.0.0",
     "requests>=2.31.0",
@@ -35,7 +32,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The AI SDK only runs inside the sandbox image; install it on the host only
+# if you want to run the agent outside Docker.
+gemini = ["google-generativeai>=0.8.0"]
+# Optional secondary interface
+slack = ["slack-bolt>=1.18.0"]
 dev = [
+    "slack-bolt>=1.18.0",
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
@@ -45,15 +48,18 @@ dev = [
 ]
 
 [project.scripts]
+coding-agent = "slackagent.web:main"
 slack-coding-agent = "slackagent.main:main"
 slack-coding-agent-cli = "slackagent.cli:main"
-slack-coding-agent-worker = "slackagent.worker:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+slackagent = ["templates/*.html"]
 
 [tool.black]
 line-length = 100
@@ -62,6 +68,7 @@ target-version = ["py39", "py310", "py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
