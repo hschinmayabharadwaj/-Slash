@@ -1,8 +1,8 @@
 """Container entry point for the Render deployment.
 
-The image runs `python app.py` next to config.json, sarvas_web/, client-dist/
-and bin/agent-service. This starts the Go agent-service on loopback inside the
-container, then serves the FastAPI backend and the built React page. All
+The image runs `python app.py` next to config.json, sarvas_web/
+and bin/agent-service. It starts the Go agent-service on loopback inside the
+container, then serves the FastAPI backend (the page is on Vercel). All
 settings come from the host's environment variables via config.json.
 """
 import atexit
