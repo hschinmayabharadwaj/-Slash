@@ -116,3 +116,18 @@ func TestNewProvider(t *testing.T) {
 		t.Error("gemini")
 	}
 }
+
+func TestUnreachableModelSaysWhy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer srv.Close()
+	g := &Gemini{APIKey: "AIzaKEY12345", Model: "m", BaseURL: srv.URL, HTTP: &http.Client{Timeout: 50 * time.Millisecond}}
+	if _, _, err := g.Generate(context.Background(), "hi", false); err == nil || !strings.Contains(err.Error(), "didn't answer within") {
+		t.Fatalf("timeout not explained: %v", err)
+	}
+	g.BaseURL = "http://127.0.0.1:1"
+	if _, _, err := g.Generate(context.Background(), "hi", false); err == nil || !strings.Contains(err.Error(), "could not reach the Gemini API: ") || strings.Contains(err.Error(), "AIza") {
+		t.Fatalf("bad error: %v", err)
+	}
+}

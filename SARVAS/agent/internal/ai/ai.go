@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -77,7 +79,7 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, jsonMode bool) (st
 		req.Header.Set("x-goog-api-key", g.APIKey) // header, never the URL (keeps it out of logs)
 		resp, err = client.Do(req)
 		if err != nil {
-			return "", 0, errors.New("could not reach the Gemini API")
+			return "", 0, reachError("the Gemini API", client.Timeout, err)
 		}
 		if !retryable(resp.StatusCode) || attempt == len(geminiBackoff) {
 			break
@@ -162,7 +164,7 @@ func (o *Ollama) Generate(ctx context.Context, prompt string, jsonMode bool) (st
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, errors.New("could not reach the Ollama server")
+		return "", 0, reachError("the Ollama server", client.Timeout, err)
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -195,4 +197,17 @@ func New(provider, apiKey, model, baseURL string) Provider {
 		return &Ollama{BaseURL: baseURL, Model: model}
 	}
 	return nil
+}
+
+// reachError says why a request never got an answer. The key travels in a
+// header, so the wrapped URL error is safe to show.
+func reachError(what string, timeout time.Duration, err error) error {
+	var ne net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		return fmt.Errorf("%s didn't answer within %s; try again, use a faster model, or raise agent.planTimeoutS/implementTimeoutS", what, timeout)
+	}
+	if ue, ok := err.(*url.Error); ok {
+		err = ue.Err
+	}
+	return fmt.Errorf("could not reach %s: %v", what, err)
 }
