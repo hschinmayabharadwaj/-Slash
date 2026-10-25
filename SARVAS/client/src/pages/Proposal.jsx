@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import Diff, { safeGitHubUrl } from '../components/Diff.jsx';
 import { Link, navigate } from '../router.jsx';
-
-function lineClass(line) {
-  if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) return 'hunk';
-  if (line.startsWith('+')) return 'add';
-  if (line.startsWith('-')) return 'del';
-  return '';
-}
-
-// Only ever link to GitHub (the server returns GitHub PR URLs).
-const safeGitHubUrl = (url) => (typeof url === 'string' && url.startsWith('https://github.com/') ? url : null);
 
 export default function Proposal({ id, onError }) {
   const [p, setP] = useState(null);
@@ -45,12 +36,7 @@ export default function Proposal({ id, onError }) {
           Base branch <code>{p.baseBranch}</code>. Approving creates a new branch with exactly this diff and opens a
           pull request. Your default branch is not touched.
         </p>
-        <pre className="diff">
-          {p.diff.replace(/\n$/, '').split('\n').map((line, i) => (
-            // eslint-disable-next-line react/no-array-index-key
-            <span key={i} className={lineClass(line)}>{line}{'\n'}</span>
-          ))}
-        </pre>
+        <Diff text={p.diff} />
 
         {p.status === 'pending' && (
           <div className="row">

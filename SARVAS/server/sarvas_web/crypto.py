@@ -41,7 +41,7 @@ def decrypt(key: bytes, text: str):
     try:
         buf = base64.b64decode(text)
         return json.loads(AESGCM(key).decrypt(buf[:12], buf[28:] + buf[12:28], None))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any tampering or wrong key means "no tokens"
         return None
 
 

@@ -64,6 +64,8 @@ type Plan struct {
 	RiskReason  string   `json:"risk_reason"`
 	Questions   []string `json:"questions"`
 	HowToVerify string   `json:"how_to_verify"`
+	// AcceptanceCriteria are checkable statements of done, agreed at plan approval.
+	AcceptanceCriteria []string `json:"acceptance_criteria"`
 }
 
 type Task struct {
@@ -77,11 +79,28 @@ type Task struct {
 	Diff        string
 	DiffSHA256  string
 	Checks      string
+	ChecksOK    bool
+	Files       []string
 	PRURL       string
 	Message     string
+
+	// Set by the web server when the task is created.
+	Requester          string   // GitHub login of the person who asked
+	BaseBranch         string   // branch to work from and open the PR against
+	AcceptanceCriteria []string // from the requester (the plan may add more)
+	Reviewers          []string // engineers to request a review from
+	Created, Updated   time.Time
 }
 
 func (t *Task) FullName() string { return t.Owner + "/" + t.Name }
+
+// Base is the branch the task starts from and targets.
+func (t *Task) Base(cfg config.Config) string {
+	if t.BaseBranch != "" {
+		return t.BaseBranch
+	}
+	return cfg.Repo(t.FullName()).DefaultBranch
+}
 
 // Store keeps tasks with atomic status transitions (in memory; safe for goroutines).
 type Store struct {
@@ -101,12 +120,20 @@ type Event struct {
 func NewStore() *Store { return &Store{tasks: map[int]*Task{}} }
 
 func (s *Store) Create(owner, name, request string) *Task {
+	return s.Add(Task{Owner: owner, Name: name, Request: request})
+}
+
+// Add stores a new pending task built from tmpl and returns it.
+func (s *Store) Add(tmpl Task) *Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
-	t := &Task{ID: s.nextID, Owner: owner, Name: name, Request: request, Status: Pending}
-	s.tasks[t.ID] = t
-	return t
+	t := tmpl
+	t.ID, t.Status = s.nextID, Pending
+	t.Created = time.Now().UTC()
+	t.Updated = t.Created
+	s.tasks[t.ID] = &t
+	return &t
 }
 
 // Get returns a copy of the task.
@@ -114,6 +141,30 @@ func (s *Store) Get(id int) Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return *s.tasks[id]
+}
+
+// Lookup returns a copy of the task, or false if there is none.
+func (s *Store) Lookup(id int) (Task, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return Task{}, false
+	}
+	return *t, true
+}
+
+// TaskEvents returns the audit events of one task.
+func (s *Store) TaskEvents(id int) []Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Event
+	for _, e := range s.Events {
+		if e.TaskID == id {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Transition moves expected -> next atomically; false if the task is elsewhere.
@@ -125,6 +176,7 @@ func (s *Store) Transition(id int, expected, next Status) bool {
 		return false
 	}
 	t.Status = next
+	t.Updated = time.Now().UTC()
 	return true
 }
 
@@ -132,6 +184,12 @@ func (s *Store) update(id int, fn func(*Task)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn(s.tasks[id])
+	s.tasks[id].Updated = time.Now().UTC()
+}
+
+// SetMessage stores the latest progress message for the task.
+func (s *Store) SetMessage(id int, msg string) {
+	s.update(id, func(t *Task) { t.Message = msg })
 }
 
 func (s *Store) Record(id int, name string, detail map[string]any) {
@@ -153,6 +211,17 @@ type Target interface {
 	CloneURL(owner, name string) (string, error)
 	AuthEnv(owner, name string) ([]string, error)
 	CreatePR(owner, name, head, base, title, body string) (string, error)
+}
+
+// ProtectionChecker is implemented by targets that can tell whether GitHub
+// requires a reviewed pull request on a branch.
+type ProtectionChecker interface {
+	BranchProtected(owner, name, branch string) (bool, error)
+}
+
+// ReviewRequester is implemented by targets that can request PR reviewers.
+type ReviewRequester interface {
+	RequestReviewers(owner, name, prURL string, reviewers []string) error
 }
 
 // Abort is an expected stop with a user-facing message.
@@ -183,6 +252,13 @@ func SHA256(s string) string {
 func (w *Worker) Step(id int) bool {
 	t := w.Store.Get(id)
 	var err error
+	if !t.Status.Terminal() && guards.KillSwitchOn(w.Cfg.Security.KillSwitchFile) {
+		switch t.Status {
+		case Pending, PlanApproved, ImplApproved:
+			w.end(t, "⏸ The agent is paused by an administrator (kill switch). Nothing was changed.", Cancelled)
+			return true
+		}
+	}
 	switch t.Status {
 	case Pending:
 		err = w.plan(t)
@@ -247,7 +323,7 @@ func (w *Worker) clone(t *Task, dest string) error {
 	if err != nil {
 		return err
 	}
-	return gitops.Clone(url, dest, w.Cfg.Repo(t.FullName()).DefaultBranch, env)
+	return gitops.Clone(url, dest, t.Base(w.Cfg), env)
 }
 
 func (w *Worker) agentInput(t *Task, mode string) runner.Input {
@@ -343,6 +419,7 @@ func NormalizePlan(raw map[string]any) (*Plan, error) {
 	return &Plan{
 		Feasible: feasible, Summary: str("summary", 1500), Files: list("files", 20), Risk: risk,
 		RiskReason: str("risk_reason", 300), Questions: list("questions", 5), HowToVerify: str("how_to_verify", 600),
+		AcceptanceCriteria: list("acceptance_criteria", 10),
 	}, nil
 }
 
@@ -389,6 +466,16 @@ func (w *Worker) plan(t Task) error {
 	if plan.Risk == "high" {
 		return &Abort{"⛔ I won't make this change myself (" + plan.RiskReason + "). Please ask an engineer.", Declined}
 	}
+	// The requester's own criteria come first; the agent's are additions.
+	seen := map[string]bool{}
+	var criteria []string
+	for _, c := range append(append([]string{}, t.AcceptanceCriteria...), plan.AcceptanceCriteria...) {
+		if k := strings.ToLower(strings.TrimSpace(c)); k != "" && !seen[k] && len(criteria) < 15 {
+			seen[k] = true
+			criteria = append(criteria, strings.TrimSpace(c))
+		}
+	}
+	plan.AcceptanceCriteria = criteria
 	w.Store.update(t.ID, func(x *Task) { x.Plan = plan })
 	t.Plan = plan
 	if err := w.advance(&t, Planning, AwaitingPlanApproval); err != nil {
@@ -509,7 +596,7 @@ func (w *Worker) implement(t Task) error {
 	}
 	summary := guards.Tail(out.Text, 2000)
 	w.Store.update(t.ID, func(x *Task) {
-		x.Summary, x.Diff, x.DiffSHA256, x.Checks = summary, diff, SHA256(diff), checks
+		x.Summary, x.Diff, x.DiffSHA256, x.Checks, x.ChecksOK, x.Files = summary, diff, SHA256(diff), checks, checksOK, files
 	})
 	if err := w.advance(&t, Verifying, AwaitingImplApproval); err != nil {
 		return err
@@ -534,6 +621,23 @@ func (w *Worker) createPR(t Task) error {
 	}
 	if t.DiffSHA256 == "" || SHA256(t.Diff) != t.DiffSHA256 {
 		return &Abort{"⛔ The stored change doesn't match what was approved. Stopping.", Declined}
+	}
+	base := t.Base(w.Cfg)
+	if w.Cfg.Security.RequireProtectedBranch {
+		pc, ok := w.Target.(ProtectionChecker)
+		if !ok {
+			return &Abort{"⛔ I can't confirm that " + base + " requires a reviewed pull request, so I won't open one.", Declined}
+		}
+		protected, err := pc.BranchProtected(t.Owner, t.Name, base)
+		if err != nil {
+			return fmt.Errorf("checking branch protection: %w", err)
+		}
+		if !protected {
+			w.Store.Record(t.ID, "unprotected_base_branch", map[string]any{"branch": base})
+			return &Abort{fmt.Sprintf("⛔ %s/%s's %s branch isn't protected, so an engineer review couldn't be enforced. "+
+				"An admin must add a branch protection rule or ruleset that requires a pull request with an approving "+
+				"review, then start the task again.", t.Owner, t.Name, base), Declined}
+		}
 	}
 	dir, cleanup, err := w.workDir(t.ID)
 	if err != nil {
@@ -577,25 +681,70 @@ func (w *Worker) createPR(t Task) error {
 	if err := gitops.Push(repoDir, t.Branch, env); err != nil {
 		return err
 	}
-	safe := guards.NeutralizeMentions
-	body := strings.Join([]string{
-		"## Summary", safe(summary), "",
-		"## How to verify", safe(t.Plan.HowToVerify), "",
-		"## Checks", "```", guards.Tail(t.Checks, 3000), "```", "",
-		"**Request:** " + safe(t.Request),
-		"**Risk:** " + t.Plan.Risk,
-		fmt.Sprintf("**Agent task:** #%d (plan and diff approved by a human)", t.ID),
-	}, "\n")
-	url, err := w.Target.CreatePR(t.Owner, t.Name, t.Branch, w.Cfg.Repo(t.FullName()).DefaultBranch,
-		safe("[agent] "+title), body)
+	url, err := w.Target.CreatePR(t.Owner, t.Name, t.Branch, base, guards.NeutralizeMentions("[agent] "+title), PRBody(t))
 	if err != nil {
 		return err
 	}
 	w.Store.update(t.ID, func(x *Task) { x.PRURL = url })
+	if rr, ok := w.Target.(ReviewRequester); ok && len(t.Reviewers) > 0 {
+		if err := rr.RequestReviewers(t.Owner, t.Name, url, t.Reviewers); err != nil {
+			w.Store.Record(t.ID, "review_request_failed", map[string]any{"error": guards.Tail(err.Error(), 200)})
+		}
+	}
 	if err := w.advance(&t, CreatingPR, Completed); err != nil {
 		return err
 	}
 	w.Store.Record(t.ID, "pr_created", map[string]any{"url": url, "branch": t.Branch})
 	w.Notify.PROpened(t, url)
 	return nil
+}
+
+// PRBody describes the change for the engineers who review it.
+func PRBody(t Task) string {
+	safe := guards.NeutralizeMentions
+	plan := Plan{}
+	if t.Plan != nil {
+		plan = *t.Plan
+	}
+	bullets := func(items []string, empty string) string {
+		if len(items) == 0 {
+			return "_" + empty + "_"
+		}
+		var b []string
+		for _, it := range items {
+			b = append(b, "- "+safe(it))
+		}
+		return strings.Join(b, "\n")
+	}
+	var files []string
+	for _, f := range t.Files {
+		files = append(files, "`"+f+"`")
+	}
+	checks := "passed"
+	if !t.ChecksOK {
+		checks = "did not all pass — see below"
+	}
+	requester := "someone"
+	if t.Requester != "" {
+		requester = safe("@" + t.Requester)
+	}
+	summary := plan.Summary
+	if summary == "" {
+		summary = t.Request
+	}
+	return strings.Join([]string{
+		"## Task", "> " + strings.ReplaceAll(safe(guards.Tail(t.Request, 2000)), "\n", "\n> "), "",
+		"Requested by " + requester + " in SARVAS. They approved the plan and this exact diff; **an engineer must review and merge.**", "",
+		"## What changed", safe(summary), "",
+		"## Acceptance criteria", bullets(plan.AcceptanceCriteria, "none given"), "",
+		"## Changed files", bullets(files, "none"), "",
+		"## Test results (" + checks + ")", "```", guards.Tail(t.Checks, 3000), "```", "",
+		"## How to verify", safe(plan.HowToVerify), "",
+		"## Risks", fmt.Sprintf("**%s** — %s", plan.Risk, safe(plan.RiskReason)), "",
+		"## Limitations",
+		"- Written by an AI agent in a network-isolated sandbox; it could not run the code itself.",
+		"- Only the repository's configured lint/test commands were run.",
+		"- The agent cannot approve or merge this pull request; branch protection decides who can.", "",
+		fmt.Sprintf("_SARVAS task #%d · diff sha256 `%s`_", t.ID, t.DiffSHA256),
+	}, "\n")
 }

@@ -1,10 +1,13 @@
 # Secrets and local state
 config.json
 !deploy/render/config.json
+!deploy/compose/config.json
+secrets/
 .env
 .env.*
 !.env.example
 *.pem
+.env.bak
 data/*
 !data/.gitkeep
 

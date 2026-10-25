@@ -44,8 +44,6 @@ func TestGeminiErrorDoesNotLeakKey(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
-<<<<<<< Updated upstream
-=======
 
 func TestGeminiRetriesOverload(t *testing.T) {
 	saved := geminiBackoff
@@ -118,4 +116,3 @@ func TestNewProvider(t *testing.T) {
 		t.Error("gemini")
 	}
 }
->>>>>>> Stashed changes

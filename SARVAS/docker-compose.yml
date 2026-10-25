@@ -1,0 +1,119 @@
+# SARVAS self-hosted: `python3 scripts/setup.py`, then `docker compose up -d --build`
+# (add `--profile local-ai` to run the Ollama model server here too).
+#
+#   web             React page + FastAPI: GitHub sign-in, dashboard, Ask, tasks, audit log.
+#                   Keeps the SQLite database and the local repository index.
+#   agent           Go agent-service: AI calls, guardrails, the Build pipeline.
+#                   Holds the GitHub App key; never sees users' GitHub tokens.
+#   sandbox-docker  A separate Docker daemon that runs ONLY the throwaway sandbox
+#                   containers (read-only root, no capabilities, checks without
+#                   network), so the agent never needs your host's Docker socket.
+#   sandbox-image   One-shot: builds the sandbox image inside sandbox-docker.
+#   ollama          Optional self-hosted model server (profile "local-ai").
+#
+# All state lives under SARVAS_DATA_DIR on this machine (see docs/SELF_HOSTING.md).
+name: sarvas
+
+x-docker-client: &docker-client
+  DOCKER_HOST: tcp://sandbox-docker:2376
+  DOCKER_TLS_VERIFY: "1"
+  DOCKER_CERT_PATH: /certs/client
+
+services:
+  web:
+    build: { context: ., dockerfile: deploy/compose/Dockerfile.web }
+    image: sarvas-web:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOME: /tmp
+    volumes:
+      - ./deploy/compose/config.json:/etc/sarvas/config.json:ro
+      - ${SARVAS_DATA_DIR:-./data}/web:/data/web
+      - ${SARVAS_DATA_DIR:-./data}/control:/data/control
+    ports:
+      - "${SARVAS_BIND:-127.0.0.1}:${SARVAS_PORT:-8765}:8765"
+    depends_on:
+      agent: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [frontend, backend]
+
+  agent:
+    build: { context: ., dockerfile: deploy/compose/Dockerfile.agent }
+    image: sarvas-agent:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-client
+      HOME: /tmp
+      # Only set when a GitHub App ID is configured (Build tasks).
+      GITHUB_PRIVATE_KEY_PATH: ${GITHUB_APP_ID:+/run/secrets/github-app.pem}
+    volumes:
+      - ./deploy/compose/config.json:/etc/sarvas/config.json:ro
+      - ${GITHUB_PRIVATE_KEY_FILE:-./deploy/compose/NO_KEY}:/run/secrets/github-app.pem:ro
+      - agent-certs:/certs/client:ro
+      # Same path inside sandbox-docker, so sandbox bind mounts resolve.
+      - ${SARVAS_DATA_DIR:-./data}/work:/data/work
+      - ${SARVAS_DATA_DIR:-./data}/control:/data/control:ro
+    depends_on:
+      sandbox-image: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  sandbox-docker:
+    image: docker:27.5.1-dind
+    restart: unless-stopped
+    privileged: true  # required by Docker-in-Docker; it runs nothing but sandbox containers
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - sandbox-certs:/certs
+      - sandbox-docker-data:/var/lib/docker
+      - ${SARVAS_DATA_DIR:-./data}/work:/data/work
+    networks: [backend]
+
+  sandbox-image:
+    image: docker:27.5.1-cli
+    environment: *docker-client
+    working_dir: /src
+    volumes:  # only what the sandbox image needs -- never .env or secrets
+      - ./agent:/src/agent:ro
+      - ./sandbox:/src/sandbox:ro
+      - ./.dockerignore:/src/.dockerignore:ro
+      - sandbox-certs:/certs:ro
+      - agent-certs:/agent-certs
+    # Waits for the daemon, hands the agent (uid 1000) its own copy of the TLS
+    # client certificate, then builds the sandbox image.
+    command:
+      - sh
+      - -c
+      - >-
+        until docker info >/dev/null 2>&1; do sleep 1; done &&
+        cp /certs/client/ca.pem /certs/client/cert.pem /certs/client/key.pem /agent-certs/ &&
+        chown 1000:1000 /agent-certs/*.pem && chmod 0400 /agent-certs/key.pem &&
+        docker build -q -f sandbox/Dockerfile -t sarvas-sandbox:latest .
+    depends_on: [sandbox-docker]
+    networks: [backend]
+
+  ollama:
+    image: ollama/ollama:0.6.5
+    profiles: [local-ai]
+    restart: unless-stopped
+    volumes:
+      - ${SARVAS_DATA_DIR:-./data}/ollama:/root/.ollama
+    networks: [backend]
+
+networks:
+  frontend: {}
+  backend: {}
+
+volumes:
+  sandbox-certs: {}
+  agent-certs: {}
+  sandbox-docker-data: {}

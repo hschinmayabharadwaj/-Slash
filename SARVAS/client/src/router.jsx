@@ -22,7 +22,10 @@ export function match(path) {
     return { page: 'repo', owner: decodeURIComponent(m[1]), name: decodeURIComponent(m[2]) };
   }
   if ((m = path.match(/^\/changes\/([^/]+)\/?$/))) return { page: 'proposal', id: decodeURIComponent(m[1]) };
+  if ((m = path.match(/^\/tasks\/([^/]+)\/?$/))) return { page: 'task', id: decodeURIComponent(m[1]) };
+  if (path === '/tasks') return { page: 'tasks' };
   if (path === '/activity') return { page: 'activity' };
+  if (path === '/admin') return { page: 'admin' };
   return { page: 'home' };
 }
 

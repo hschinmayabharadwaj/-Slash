@@ -6,7 +6,7 @@ PY := server/.venv/bin/python
 -include .env
 export
 
-.PHONY: install build test run run-service run-web sandbox-image clean
+.PHONY: install build test lint run run-service run-web sandbox-image setup check up down clean
 
 install:
 	uv venv --allow-existing --python 3.12 server/.venv
@@ -20,6 +20,24 @@ build:
 test:
 	cd agent && go vet ./... && go test ./...
 	cd server && .venv/bin/python -m pytest -q tests
+	cd client && npm run build
+
+lint:
+	cd agent && test -z "$$(gofmt -l .)" && go vet ./...
+	cd server && .venv/bin/ruff check . ../scripts && .venv/bin/mypy
+
+# --- Docker Compose (self-hosting)
+setup:
+	python3 scripts/setup.py
+
+check:
+	python3 scripts/setup.py --check
+
+up:
+	docker compose $(if $(filter ollama,$(AI_PROVIDER)),--profile local-ai) up -d --build
+
+down:
+	docker compose --profile local-ai down
 
 sandbox-image:
 	docker build -f sandbox/Dockerfile -t sarvas-sandbox:latest .

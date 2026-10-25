@@ -24,9 +24,21 @@ DEFAULTS: dict = {
     "security": {
         "allowedUsers": [],
         "allowedRepos": [],
+        # Roles: everyone allowed in is a "requester"; engineers approve
+        # medium-risk plans; admins also see the full audit log and kill switch.
+        "roles": {"admins": [], "engineers": []},
         "maxChangesPerHour": 10,
         "maxDraftsPerHour": 20,
+        "maxQuestionsPerHour": 60,
+        "maxTasksPerHour": 5,
         "killSwitchFile": "./data/KILL_SWITCH",
+        "protectedPaths": [".git/**", ".github/workflows/**", ".env*", "**/secrets/**", "**/*.pem", "**/*.key"],
+    },
+    "index": {
+        "dir": "",  # default: <web.dataDir>/repos
+        "maxFileKb": 256,
+        "maxFiles": 5000,
+        "chunkLines": 60,
     },
     "repos": {},
 }
@@ -71,11 +83,18 @@ def load_config(config_path: str | os.PathLike = "config.json") -> dict:
     config["web"]["extraHosts"] = _as_list(config["web"].get("extraHosts"))
     sec["allowedUsers"] = _as_list(sec.get("allowedUsers"))
     sec["allowedRepos"] = _as_list(sec.get("allowedRepos"))
+    roles = sec["roles"] = {**DEFAULTS["security"]["roles"], **(sec.get("roles") or {})}
+    for role, env in (("admins", "SARVAS_ADMINS"), ("engineers", "SARVAS_ENGINEERS")):
+        logins = _as_list(roles.get(role)) + _as_list(os.environ.get(env, ""))
+        roles[role] = list(dict.fromkeys(logins))
+    sec["protectedPaths"] = _as_list(sec.get("protectedPaths"))
     # Relative paths are relative to the config file, not the working directory.
     base = path.resolve().parent
-    for section, key in (("web", "dataDir"), ("web", "clientDist"), ("security", "killSwitchFile")):
+    for section, key in (("web", "dataDir"), ("web", "clientDist"), ("security", "killSwitchFile"), ("index", "dir")):
         if config[section][key]:
             config[section][key] = str((base / config[section][key]).resolve())
+    if not config["index"]["dir"]:
+        config["index"]["dir"] = str(Path(config["web"]["dataDir"]) / "repos")
     validate(config)
     return config
 
@@ -93,7 +112,8 @@ def validate(config: dict) -> None:
     if len(config["agentService"].get("token") or "") < 32:
         raise ValueError("agentService.token (AGENT_SERVICE_TOKEN) must be a random value of at least 32 characters")
     # A public page with nobody listed would let any GitHub user spend your AI key.
-    if not is_local(config) and not config["security"]["allowedUsers"]:
+    sec = config["security"]
+    if not is_local(config) and not (sec["allowedUsers"] or sec["roles"]["admins"] or sec["roles"]["engineers"]):
         raise ValueError("security.allowedUsers (SARVAS_ALLOWED_USERS) must list the GitHub logins "
                          "allowed to sign in when the page is reachable beyond this machine")
 
@@ -107,5 +127,9 @@ def repo_allowed(config: dict, full_name: str) -> bool:
 
 
 def user_allowed(config: dict, login: str) -> bool:
+    """Admins and engineers are always allowed in; otherwise the allowlist decides."""
+    roles = config["security"]["roles"]
     allowed = config["security"]["allowedUsers"]
-    return not allowed or any(u.lower() == login.lower() for u in allowed)
+    if not allowed:
+        return True
+    return any(u.lower() == login.lower() for u in [*allowed, *roles["admins"], *roles["engineers"]])

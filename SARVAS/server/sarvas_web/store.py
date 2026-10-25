@@ -10,7 +10,7 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .crypto import decrypt, encrypt, random_token, sha256
@@ -41,11 +41,20 @@ class Store:
             CREATE TABLE IF NOT EXISTS audit (
               id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT, event TEXT NOT NULL,
               detail TEXT, created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS tasks (
+              id TEXT PRIMARY KEY, agent_id INTEGER, login TEXT NOT NULL, owner TEXT NOT NULL,
+              name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL,
+              created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS tasks_repo ON tasks (owner, name);
         """)
 
     def _run(self, sql: str, *args) -> sqlite3.Cursor:
         with self.lock:
             return self.db.execute(sql, args)
+
+    def _count(self, sql: str, *args) -> int:
+        row = self._one(sql, *args)
+        return int(row["n"]) if row else 0
 
     def _one(self, sql: str, *args) -> dict | None:
         with self.lock:
@@ -108,23 +117,64 @@ class Store:
         self._run("UPDATE proposals SET status = ?, pr_url = ? WHERE id = ?", status, pr_url, pid)
 
     def proposals_last_hour(self, login: str) -> int:
-        return self._one("SELECT COUNT(*) AS n FROM proposals WHERE login = ? AND created_at > ?",
-                         login, _now() - HOUR_MS)["n"]
+        return self._count("SELECT COUNT(*) AS n FROM proposals WHERE login = ? AND created_at > ?",
+                         login, _now() - HOUR_MS)
+
+    # -- build tasks (the agent-service runs them; this is the durable record) -
+
+    def save_task(self, login: str, owner: str, name: str, agent_id: int, view: dict) -> str:
+        tid = random_token(12)
+        self._run("""INSERT INTO tasks (id, agent_id, login, owner, name, status, data, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", tid, agent_id, login, owner, name,
+                  view.get("status", "pending"), json.dumps(view), _now(), _now())
+        return tid
+
+    def update_task(self, tid: str, view: dict) -> None:
+        self._run("UPDATE tasks SET status = ?, data = ?, updated_at = ? WHERE id = ?",
+                  view.get("status", ""), json.dumps(view), _now(), tid)
+
+    def get_task(self, tid: str) -> dict | None:
+        row = self._one("SELECT * FROM tasks WHERE id = ?", tid)
+        return {**row, "view": json.loads(row["data"])} if row else None
+
+    def list_tasks(self, login: str | None = None, repos: set[str] | None = None, limit: int = 100) -> list[dict]:
+        """A user's own tasks, plus (for engineers) every task on the given repos."""
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 1000").fetchall()
+        out = []
+        for r in rows:
+            mine = login is not None and r["login"] == login
+            visible = repos is not None and f"{r['owner']}/{r['name']}".lower() in repos
+            if mine or visible:
+                out.append({**dict(r), "view": json.loads(r["data"])})
+            if len(out) >= limit:
+                break
+        return out
+
+    def tasks_last_hour(self, login: str) -> int:
+        return self._count("SELECT COUNT(*) AS n FROM tasks WHERE login = ? AND created_at > ?",
+                         login, _now() - HOUR_MS)
 
     # -- audit ----------------------------------------------------------------
 
     def record(self, login: str | None, event: str, detail: dict | None = None) -> None:
         self._run("INSERT INTO audit (login, event, detail, created_at) VALUES (?, ?, ?, ?)",
                   login, event, json.dumps(detail or {}),
-                  datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"))
+                  datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"))
 
     def events_last_hour(self, login: str, event: str) -> int:
-        since = datetime.fromtimestamp((_now() - HOUR_MS) / 1000, timezone.utc)
-        return self._one("SELECT COUNT(*) AS n FROM audit WHERE login = ? AND event = ? AND created_at > ?",
-                         login, event, since.isoformat(timespec="milliseconds").replace("+00:00", "Z"))["n"]
+        since = datetime.fromtimestamp((_now() - HOUR_MS) / 1000, UTC)
+        return self._count("SELECT COUNT(*) AS n FROM audit WHERE login = ? AND event = ? AND created_at > ?",
+                         login, event, since.isoformat(timespec="milliseconds").replace("+00:00", "Z"))
 
-    def events(self, login: str, limit: int = 100) -> list[dict]:
+    def events(self, login: str | None, limit: int = 100) -> list[dict]:
+        """One user's audit trail, or everyone's (login=None, admins only)."""
         with self.lock:
-            rows = self.db.execute("SELECT event, detail, created_at FROM audit WHERE login = ? "
-                                   "ORDER BY id DESC LIMIT ?", (login, limit)).fetchall()
-        return [{"event": r["event"], "detail": json.loads(r["detail"]), "at": r["created_at"]} for r in rows]
+            if login is None:
+                rows = self.db.execute("SELECT login, event, detail, created_at FROM audit "
+                                       "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            else:
+                rows = self.db.execute("SELECT login, event, detail, created_at FROM audit WHERE login = ? "
+                                       "ORDER BY id DESC LIMIT ?", (login, limit)).fetchall()
+        return [{"login": r["login"], "event": r["event"], "detail": json.loads(r["detail"]), "at": r["created_at"]}
+                for r in rows]

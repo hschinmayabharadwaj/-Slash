@@ -39,14 +39,24 @@ func origin(t *testing.T) string {
 }
 
 type fakeTarget struct {
-	path string
-	prs  []string
+	path        string
+	prs         []string
+	bodies      []string
+	unprotected bool
+	reviewers   []string
+}
+
+func (f *fakeTarget) BranchProtected(_, _, _ string) (bool, error) { return !f.unprotected, nil }
+func (f *fakeTarget) RequestReviewers(_, _, _ string, r []string) error {
+	f.reviewers = append(f.reviewers, r...)
+	return nil
 }
 
 func (f *fakeTarget) CloneURL(_, _ string) (string, error)  { return f.path, nil }
 func (f *fakeTarget) AuthEnv(_, _ string) ([]string, error) { return nil, nil }
-func (f *fakeTarget) CreatePR(_, _, head, base, _, _ string) (string, error) {
+func (f *fakeTarget) CreatePR(_, _, head, base, _, body string) (string, error) {
 	f.prs = append(f.prs, head+"->"+base)
+	f.bodies = append(f.bodies, body)
 	return "https://github.com/o/r/pull/1", nil
 }
 
@@ -210,5 +220,54 @@ func TestTransitionIsAtomic(t *testing.T) {
 	task := s.Create("o", "r", "x")
 	if !s.Transition(task.ID, Pending, Planning) || s.Transition(task.ID, Pending, Planning) {
 		t.Fatal("transition not atomic")
+	}
+}
+
+func TestUnprotectedBaseBranchRefused(t *testing.T) {
+	box := &fakeSandbox{plan: plan(nil), edit: writeFile("README.md", "# Origin\nHello!\n")}
+	w, target, task, _ := setup(t, box)
+	target.unprotected = true
+	toImplApproval(t, w, task.ID)
+	w.Store.Transition(task.ID, AwaitingImplApproval, ImplApproved)
+	w.Step(task.ID)
+	got := w.Store.Get(task.ID)
+	if got.Status != Declined || len(target.prs) != 0 || !strings.Contains(got.Message, "isn't protected") {
+		t.Fatalf("%s %q %v", got.Status, got.Message, target.prs)
+	}
+}
+
+func TestPRDescribesTaskForReviewers(t *testing.T) {
+	box := &fakeSandbox{plan: plan(map[string]any{"acceptance_criteria": []any{"README greets the reader"}}),
+		edit: writeFile("README.md", "# Origin\nHello!\n")}
+	w, target, _, _ := setup(t, box)
+	task := w.Store.Add(Task{Owner: "o", Name: "r", Request: "Add a greeting", Requester: "alice",
+		BaseBranch: "main", AcceptanceCriteria: []string{"Says hello"}, Reviewers: []string{"eng1"}})
+	toImplApproval(t, w, task.ID)
+	w.Store.Transition(task.ID, AwaitingImplApproval, ImplApproved)
+	w.Step(task.ID)
+	if s := w.Store.Get(task.ID).Status; s != Completed {
+		t.Fatalf("%s %s", s, w.Store.Get(task.ID).Message)
+	}
+	body := target.bodies[0]
+	for _, want := range []string{"Add a greeting", "- Says hello", "- README greets the reader", "`README.md`",
+		"Test results (passed)", "## Risks", "## Limitations", "an engineer must review and merge", "@\u200balice"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PR body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Join(target.reviewers, ",") != "eng1" {
+		t.Errorf("reviewers %v", target.reviewers)
+	}
+}
+
+func TestKillSwitchStopsPendingWork(t *testing.T) {
+	box := &fakeSandbox{plan: plan(nil)}
+	w, _, task, _ := setup(t, box)
+	ks := filepath.Join(t.TempDir(), "KILL")
+	os.WriteFile(ks, nil, 0o600)
+	w.Cfg.Security.KillSwitchFile = ks
+	w.Step(task.ID)
+	if got := w.Store.Get(task.ID); got.Status != Cancelled || len(box.runs) != 0 {
+		t.Fatalf("%s %v", got.Status, box.runs)
 	}
 }
