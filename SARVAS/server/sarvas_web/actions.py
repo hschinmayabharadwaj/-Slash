@@ -36,7 +36,7 @@ def file_diff(old_text: str, new_text: str, path: str) -> str:
     a, b = lines(old_text), lines(new_text)
     header = [f"--- {f'a/{path}' if a else '/dev/null'}", f"+++ {f'b/{path}' if b else '/dev/null'}",
               f"@@ -{1 if a else 0},{len(a)} +{1 if b else 0},{len(b)} @@"]
-    return "\n".join(header + [f"-{l}" for l in a] + [f"+{l}" for l in b]) + "\n"
+    return "\n".join(header + [f"-{line}" for line in a] + [f"+{line}" for line in b]) + "\n"
 
 
 def authorize(gh: GitHubUser, config: dict, owner: str, name: str) -> dict:
@@ -100,6 +100,6 @@ def apply(gh: GitHubUser, config: dict, p: dict, actor: str) -> str:
     except Exception:
         try:
             gh.delete_branch(p["owner"], p["name"], branch)  # don't leave debris
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 -- best-effort cleanup; the original error is re-raised
             pass
         raise

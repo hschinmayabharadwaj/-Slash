@@ -4,6 +4,10 @@
 // pull-requests write permission, are never embedded in clone URLs (so they
 // never land in .git/config, which the sandbox can read), and reach git only
 // through GIT_CONFIG_* environment variables.
+//
+// Every REST call goes through an allowlist. There is deliberately no way to
+// merge a pull request, submit a review, or change branch protection: the
+// agent proposes, engineers approve and merge on GitHub.
 package github
 
 import (
@@ -18,9 +22,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,16 +47,49 @@ func ValidateRepoName(owner, name string) error {
 	return nil
 }
 
+// allowedCalls is every REST call this package may make. Merging, reviews,
+// branch-protection changes and everything else are refused before any
+// request is sent.
+var allowedCalls = []struct {
+	method string
+	path   *regexp.Regexp
+}{
+	{"GET", regexp.MustCompile(`^/app$`)},
+	{"GET", regexp.MustCompile(`^/app/installations$`)},
+	{"GET", regexp.MustCompile(`^/repos/[^/]+/[^/]+/installation$`)},
+	{"POST", regexp.MustCompile(`^/app/installations/\d+/access_tokens$`)},
+	{"GET", regexp.MustCompile(`^/repos/[^/]+/[^/]+/branches/[^/]+$`)},
+	{"GET", regexp.MustCompile(`^/repos/[^/]+/[^/]+/rules/branches/[^/]+$`)},
+	{"POST", regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`)},
+	{"POST", regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/requested_reviewers$`)},
+}
+
+// ErrForbiddenCall is returned for any call outside allowedCalls.
+var ErrForbiddenCall = errors.New("this GitHub API call is not allowed for the agent")
+
+func callAllowed(method, path string) bool {
+	if strings.Contains(path, "..") {
+		return false
+	}
+	for _, c := range allowedCalls {
+		if c.method == method && c.path.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
 // App is a GitHub App installation client.
 type App struct {
 	AppID          string
 	PrivateKeyPath string
-	InstallationID string
+	InstallationID string // optional fallback; normally looked up per repository
 	HTTP           *http.Client
 	BaseURL        string // API base (tests)
 
-	mu     sync.Mutex
-	tokens map[string]cachedToken
+	mu            sync.Mutex
+	tokens        map[string]cachedToken
+	installations map[string]string
 }
 
 type cachedToken struct {
@@ -106,42 +147,135 @@ func (a *App) JWT() (string, error) {
 	return signing + "." + b64(sig), nil
 }
 
-// Token returns an installation token scoped to one repo (cached ~55 min).
-func (a *App) Token(repo string) (string, error) {
+// HTTPError is a non-2xx GitHub response (message only, never credentials).
+type HTTPError struct {
+	Status  int
+	Message string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("GitHub API error (HTTP %d): %s", e.Status, e.Message)
+}
+
+// call performs one allowlisted REST call with the given bearer credential.
+func (a *App) call(method, path, bearer string, body, out any) error {
+	if !callAllowed(method, path) {
+		return fmt.Errorf("%w: %s %s", ErrForbiddenCall, method, path)
+	}
+	var reader io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, a.base()+path, reader)
+	if err == nil {
+		req.URL.RawPath = path // keep %2F in branch names encoded
+	}
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := a.client().Do(req)
+	if err != nil {
+		return errors.New("could not reach the GitHub API")
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode >= 300 {
+		var e struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(data, &e)
+		if len(e.Message) > 200 {
+			e.Message = e.Message[:200]
+		}
+		return &HTTPError{resp.StatusCode, e.Message}
+	}
+	if out != nil && len(data) > 0 {
+		return json.Unmarshal(data, out)
+	}
+	return nil
+}
+
+func repoKey(owner, name string) string { return strings.ToLower(owner + "/" + name) }
+
+// installation finds the App installation that covers owner/name.
+func (a *App) installation(owner, name string) (string, error) {
+	key := repoKey(owner, name)
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if t, ok := a.tokens[repo]; ok && time.Now().Before(t.expires) {
-		return t.value, nil
+	id, ok := a.installations[key]
+	a.mu.Unlock()
+	if ok {
+		return id, nil
 	}
 	jwt, err := a.JWT()
 	if err != nil {
 		return "", err
 	}
-	body, _ := json.Marshal(map[string]any{
-		"repositories": []string{repo},
-		"permissions":  map[string]string{"contents": "write", "pull_requests": "write"},
-	})
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/app/installations/%s/access_tokens", a.base(), a.InstallationID), bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("installation token request failed")
+	var out struct {
+		ID int64 `json:"id"`
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("installation token request failed: HTTP %d", resp.StatusCode)
+	if err := a.call("GET", fmt.Sprintf("/repos/%s/%s/installation", owner, name), jwt, nil, &out); err != nil || out.ID == 0 {
+		if a.InstallationID != "" {
+			return a.InstallationID, nil
+		}
+		return "", fmt.Errorf("the GitHub App is not installed on %s/%s", owner, name)
+	}
+	id = strconv.FormatInt(out.ID, 10)
+	a.mu.Lock()
+	if a.installations == nil {
+		a.installations = map[string]string{}
+	}
+	a.installations[key] = id
+	a.mu.Unlock()
+	return id, nil
+}
+
+// RepoToken returns an installation token scoped to ONE repository with only
+// contents + pull-requests write permission (cached ~55 min).
+func (a *App) RepoToken(owner, name string) (string, error) {
+	if err := ValidateRepoName(owner, name); err != nil {
+		return "", err
+	}
+	key := repoKey(owner, name)
+	a.mu.Lock()
+	t, ok := a.tokens[key]
+	a.mu.Unlock()
+	if ok && time.Now().Before(t.expires) {
+		return t.value, nil
+	}
+	inst, err := a.installation(owner, name)
+	if err != nil {
+		return "", err
+	}
+	jwt, err := a.JWT()
+	if err != nil {
+		return "", err
 	}
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Token == "" {
+	err = a.call("POST", fmt.Sprintf("/app/installations/%s/access_tokens", inst), jwt, map[string]any{
+		"repositories": []string{name},
+		"permissions":  map[string]string{"contents": "write", "pull_requests": "write"},
+	}, &out)
+	if err != nil {
+		return "", fmt.Errorf("installation token request failed: %w", err)
+	}
+	if out.Token == "" {
 		return "", errors.New("installation token response invalid")
 	}
+	a.mu.Lock()
 	if a.tokens == nil {
 		a.tokens = map[string]cachedToken{}
 	}
-	a.tokens[repo] = cachedToken{out.Token, time.Now().Add(55 * time.Minute)}
+	a.tokens[key] = cachedToken{out.Token, time.Now().Add(55 * time.Minute)}
+	a.mu.Unlock()
 	return out.Token, nil
 }
 
@@ -155,7 +289,7 @@ func (a *App) CloneURL(owner, name string) (string, error) {
 
 // AuthEnv authenticates a single git command via GIT_CONFIG_* (never argv, never disk).
 func (a *App) AuthEnv(owner, name string) ([]string, error) {
-	tok, err := a.Token(name)
+	tok, err := a.RepoToken(owner, name)
 	if err != nil {
 		return nil, err
 	}
@@ -167,30 +301,105 @@ func (a *App) AuthEnv(owner, name string) ([]string, error) {
 	}, nil
 }
 
-// CreatePR opens a pull request and returns its URL.
+// CreatePR opens a pull request (never merges) and returns its URL.
 func (a *App) CreatePR(owner, name, head, base, title, body string) (string, error) {
-	if err := ValidateRepoName(owner, name); err != nil {
-		return "", err
-	}
-	tok, err := a.Token(name)
+	tok, err := a.RepoToken(owner, name)
 	if err != nil {
 		return "", err
-	}
-	payload, _ := json.Marshal(map[string]string{"title": title, "head": head, "base": base, "body": body})
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/repos/%s/%s/pulls", a.base(), owner, name), bytes.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := a.client().Do(req)
-	if err != nil {
-		return "", errors.New("create pull request failed")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("create pull request failed: HTTP %d", resp.StatusCode)
 	}
 	var out struct {
 		HTMLURL string `json:"html_url"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&out)
+	err = a.call("POST", fmt.Sprintf("/repos/%s/%s/pulls", owner, name), tok,
+		map[string]any{"title": title, "head": head, "base": base, "body": body, "maintainer_can_modify": true}, &out)
+	if err != nil {
+		return "", fmt.Errorf("create pull request failed: %w", err)
+	}
 	return out.HTMLURL, nil
+}
+
+var prNumber = regexp.MustCompile(`/pull/(\d+)$`)
+
+// RequestReviewers asks engineers to review the PR (best effort; GitHub only
+// accepts collaborators, and never the PR author).
+func (a *App) RequestReviewers(owner, name, prURL string, reviewers []string) error {
+	m := prNumber.FindStringSubmatch(prURL)
+	if m == nil || len(reviewers) == 0 {
+		return nil
+	}
+	tok, err := a.RepoToken(owner, name)
+	if err != nil {
+		return err
+	}
+	return a.call("POST", fmt.Sprintf("/repos/%s/%s/pulls/%s/requested_reviewers", owner, name, m[1]), tok,
+		map[string]any{"reviewers": reviewers}, nil)
+}
+
+// BranchProtected reports whether GitHub requires a pull request (classic
+// branch protection or a ruleset with a pull_request rule) on branch.
+func (a *App) BranchProtected(owner, name, branch string) (bool, error) {
+	if err := ValidateRepoName(owner, name); err != nil {
+		return false, err
+	}
+	tok, err := a.RepoToken(owner, name)
+	if err != nil {
+		return false, err
+	}
+	var rules []struct {
+		Type string `json:"type"`
+	}
+	if err := a.call("GET", fmt.Sprintf("/repos/%s/%s/rules/branches/%s", owner, name, url.PathEscape(branch)), tok, nil, &rules); err == nil {
+		for _, r := range rules {
+			if r.Type == "pull_request" {
+				return true, nil
+			}
+		}
+	}
+	var b struct {
+		Protected bool `json:"protected"`
+	}
+	if err := a.call("GET", fmt.Sprintf("/repos/%s/%s/branches/%s", owner, name, url.PathEscape(branch)), tok, nil, &b); err != nil {
+		return false, err
+	}
+	return b.Protected, nil
+}
+
+// AppInfo is what Check reports about the App and its installations.
+type AppInfo struct {
+	Slug          string
+	Installations []Installation
+}
+
+type Installation struct {
+	Account     string
+	Permissions map[string]string
+}
+
+// Check verifies the App ID + private key with GitHub and lists installations.
+func (a *App) Check() (AppInfo, error) {
+	var info AppInfo
+	jwt, err := a.JWT()
+	if err != nil {
+		return info, err
+	}
+	var app struct {
+		Slug string `json:"slug"`
+	}
+	if err := a.call("GET", "/app", jwt, nil, &app); err != nil {
+		return info, err
+	}
+	info.Slug = app.Slug
+	var inst []struct {
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := a.call("GET", "/app/installations", jwt, nil, &inst); err != nil {
+		return info, err
+	}
+	for _, i := range inst {
+		info.Installations = append(info.Installations, Installation{i.Account.Login, i.Permissions})
+	}
+	return info, nil
 }

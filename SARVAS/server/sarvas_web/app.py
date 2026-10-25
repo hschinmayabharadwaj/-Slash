@@ -22,11 +22,14 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
+from . import workflows
 from .actions import ACTIONS, README, ActionRefused, apply, authorize, fingerprint, propose
 from .agent_client import AgentServiceError
 from .config import user_allowed
 from .crypto import random_token, safe_equal
 from .github import GitHubError, GitHubOAuth, GitHubUser, token_expired
+from .indexer import Indexes
+from .rbac import role_of
 
 log = logging.getLogger("sarvas")
 
@@ -61,8 +64,9 @@ def _error(status: int, message: str, signed_out: bool = False) -> JSONResponse:
     return JSONResponse({"error": message, **({"signedOut": True} if signed_out else {})}, status_code=status)
 
 
-def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> FastAPI:
+def create_app(config: dict, store, agent, http: httpx.Client | None = None, indexes: Indexes | None = None) -> FastAPI:
     http = http or httpx.Client(timeout=30)
+    indexes = indexes or Indexes(config)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     web = config["web"]
@@ -100,7 +104,7 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
         """Require a signed-in (and still allowed) user. Refreshes expired tokens."""
         sid, session = session_of(request)
         tokens = store.tokens(session) if session and session.get("login") else None
-        if not tokens:
+        if not tokens or not session or not sid:
             raise ApiError(401, "Not connected to GitHub.", True)
         if not user_allowed(config, session["login"]):
             store.delete_session(sid)
@@ -173,10 +177,13 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
     def session_info(request: Request, response: Response):
         sid, session = session_of(request)
         if not session:
-            sid = store.new_session()
-            session = store.get_session(sid)
-            set_cookie(response, sid)
-        return {"signedIn": bool(session.get("login")), "login": session.get("login"),
+            new_sid = store.new_session()
+            session = store.get_session(new_sid)
+            if session is None:
+                raise ApiError(500, "Could not start a session.")
+            set_cookie(response, new_sid)
+        login = session.get("login")
+        return {"signedIn": bool(login), "login": login, "role": role_of(config, login) if login else None,
                 "csrf": session["csrf"], "actions": ACTIONS}
 
     @app.post("/api/logout")
@@ -194,9 +201,11 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
     # ---------------------------------------------------------------- repos & changes
 
     def repo_view(r: dict) -> dict:
+        perms = r.get("permissions") or {}
         return {"fullName": r["full_name"], "owner": r["owner"]["login"], "name": r["name"],
                 "private": r.get("private", False), "defaultBranch": r["default_branch"],
-                "description": r.get("description") or ""}
+                "description": r.get("description") or "", "archived": r.get("archived", False),
+                "access": "admin" if perms.get("admin") else "write" if perms.get("push") else "read"}
 
     @app.get("/api/repos")
     def repos(user: User = Depends(signed_in)):
@@ -204,7 +213,7 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
 
     @app.get("/api/repos/{owner}/{name}")
     def repo(owner: str, name: str, user: User = Depends(signed_in)):
-        r = authorize(user.gh, config, owner, name)
+        r = workflows.authorize_read(user.gh, config, owner, name)
         readme = user.gh.get_file(owner, name, README, r["default_branch"])
         return {"repo": repo_view(r),
                 "readme": {"exists": True, "text": readme["text"][:20000]} if readme else {"exists": False}}
@@ -283,6 +292,9 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
     def activity(user: User = Depends(signed_in)):
         return {"events": store.events(user.login)}
 
+    workflows.register(app, config=config, store=store, agent=agent, indexes=indexes, signed_in=signed_in,
+                       csrf=csrf, record=record, ApiError=ApiError)
+
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
                    include_in_schema=False)
     def api_not_found(rest: str):
@@ -292,16 +304,18 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
 
     dist = Path(web["clientDist"]).resolve() if web["clientDist"] else None
     index = dist / "index.html" if dist else None
-    if index and index.is_file():
+    if dist is not None and index is not None and index.is_file():
+        root, index_file = dist, index
+
         @app.get("/{rest:path}", include_in_schema=False)
         def spa(rest: str):
             if rest.startswith("auth/"):
                 return PlainTextResponse("Not found", status_code=404)
-            target = (dist / rest).resolve()
+            target = (root / rest).resolve()
             hidden = any(part.startswith(".") for part in Path(rest).parts)
-            if rest and not hidden and target.is_relative_to(dist) and target.is_file():
+            if rest and not hidden and target.is_relative_to(root) and target.is_file():
                 return FileResponse(target, headers={"Cache-Control": "public, max-age=3600"})
-            return FileResponse(index)
+            return FileResponse(index_file)
     else:
         @app.get("/", include_in_schema=False)
         def not_built():
@@ -328,7 +342,8 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None) -> 
 
     @app.exception_handler(AgentServiceError)
     def on_agent_error(request: Request, e: AgentServiceError):
-        return _error(502, str(e))
+        # 409 (task moved on) and 503 (paused / unavailable) are meaningful to the page.
+        return _error(e.status if e.status in (409, 503) else 502, str(e))
 
     @app.exception_handler(RequestValidationError)
     def on_invalid(request: Request, e: RequestValidationError):

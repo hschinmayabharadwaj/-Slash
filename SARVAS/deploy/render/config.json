@@ -20,11 +20,12 @@
   "ai": {
     "provider": "gemini",
     "apiKey": "${GEMINI_API_KEY}",
-    "model": "gemini-2.5-flash"
+    "model": "gemini-3.8-flash"
   },
   "security": {
     "allowedUsers": "${SARVAS_ALLOWED_USERS}",
-    "allowedRepos": [],
+    "allowedRepos": "${SARVAS_ALLOWED_REPOS}",
+    "roles": {"admins": "${SARVAS_ADMINS}", "engineers": "${SARVAS_ENGINEERS}"},
     "maxChangesPerHour": 10,
     "maxDraftsPerHour": 20,
     "maxReadmeChars": 50000,

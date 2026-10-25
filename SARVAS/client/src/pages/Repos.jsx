@@ -21,7 +21,10 @@ export default function Repos({ onError }) {
             <li key={r.fullName}>
               <Link to={`/repos/${encodeURIComponent(r.owner)}/${encodeURIComponent(r.name)}`}>
                 <span>{r.fullName}</span>
-                <span className="tag">{r.private ? 'private' : 'public'}</span>
+                <span>
+                  <span className="tag">{r.access}</span>{' '}
+                  <span className="tag">{r.private ? 'private' : 'public'}</span>
+                </span>
               </Link>
             </li>
           ))}

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,5 +64,71 @@ func TestValidateRepoName(t *testing.T) {
 	}
 	if ValidateRepoName("octo", "my-repo.go") != nil {
 		t.Error("valid name rejected")
+	}
+}
+
+func testApp(t *testing.T, handler http.HandlerFunc) *App {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	keyPath := filepath.Join(t.TempDir(), "app.pem")
+	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return &App{AppID: "1", PrivateKeyPath: keyPath, BaseURL: srv.URL}
+}
+
+func TestNoMergeOrReviewCalls(t *testing.T) {
+	for _, c := range [][2]string{
+		{"PUT", "/repos/o/r/pulls/1/merge"},
+		{"POST", "/repos/o/r/pulls/1/reviews"},
+		{"PUT", "/repos/o/r/branches/main/protection"},
+		{"DELETE", "/repos/o/r/branches/main/protection"},
+		{"PATCH", "/repos/o/r"},
+		{"POST", "/repos/o/r/merges"},
+		{"POST", "/repos/o/r/pulls/../merges"},
+	} {
+		if callAllowed(c[0], c[1]) {
+			t.Errorf("%s %s must be refused", c[0], c[1])
+		}
+	}
+	app := testApp(t, func(w http.ResponseWriter, r *http.Request) { t.Errorf("request sent: %s", r.URL) })
+	if err := app.call("PUT", "/repos/o/r/pulls/1/merge", "x", nil, nil); !errors.Is(err, ErrForbiddenCall) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestPerRepoInstallationAndProtection(t *testing.T) {
+	var tokenReqs []string
+	app := testApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/web/installation":
+			w.Write([]byte(`{"id":77}`))
+		case r.URL.Path == "/app/installations/77/access_tokens":
+			tokenReqs = append(tokenReqs, r.URL.Path)
+			w.Write([]byte(`{"token":"ghs_scopedtoken12345678"}`))
+		case r.URL.EscapedPath() == "/repos/acme/web/rules/branches/release%2F1":
+			w.Write([]byte(`[{"type":"pull_request"}]`))
+		case r.URL.Path == "/repos/acme/web/rules/branches/main":
+			w.Write([]byte(`[]`))
+		case r.URL.Path == "/repos/acme/web/branches/main":
+			w.Write([]byte(`{"name":"main","protected":false}`))
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	if ok, err := app.BranchProtected("acme", "web", "release/1"); err != nil || !ok {
+		t.Fatalf("ruleset protection not detected: %v %v", ok, err)
+	}
+	if ok, err := app.BranchProtected("acme", "web", "main"); err != nil || ok {
+		t.Fatalf("unprotected main reported protected: %v %v", ok, err)
+	}
+	if len(tokenReqs) != 1 {
+		t.Fatalf("token should be cached per repo, got %d requests", len(tokenReqs))
+	}
+}
+
+func TestNotInstalled(t *testing.T) {
+	app := testApp(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })
+	if _, err := app.RepoToken("acme", "other"); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("%v", err)
 	}
 }

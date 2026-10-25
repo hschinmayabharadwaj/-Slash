@@ -1,0 +1,24 @@
+# Tooling only (the server is run with `python -m sarvas_web`, not installed).
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE"]
+ignore = [
+  "S101",  # assert in tests
+  "S603", "S607",  # git is run with a fixed argv list, never a shell
+  "B008",  # FastAPI Depends() in defaults is the framework's idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+files = ["sarvas_web"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

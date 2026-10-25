@@ -43,3 +43,47 @@ func TestGeminiErrorDoesNotLeakKey(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestOllamaRequestShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["model"] != "qwen2.5-coder:7b" || body["format"] != "json" || body["stream"] != false {
+			t.Errorf("body %v", body)
+		}
+		w.Write([]byte(`{"message":{"role":"assistant","content":"{\"ok\":true}"},"prompt_eval_count":10,"eval_count":5}`))
+	}))
+	defer srv.Close()
+	o := &Ollama{BaseURL: srv.URL + "/", Model: "qwen2.5-coder:7b"}
+	text, tokens, err := o.Generate(context.Background(), "hi", true)
+	if err != nil || text != `{"ok":true}` || tokens != 15 {
+		t.Fatalf("%q %d %v", text, tokens, err)
+	}
+}
+
+func TestOllamaError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"error":"model \"nope\" not found, try pulling it first"}`))
+	}))
+	defer srv.Close()
+	_, _, err := (&Ollama{BaseURL: srv.URL, Model: "nope"}).Generate(context.Background(), "hi", false)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestNewProvider(t *testing.T) {
+	if New("sim", "", "", "") != nil {
+		t.Error("sim must be nil (offline)")
+	}
+	if p := New("ollama", "", "m", "http://x"); p == nil || p.Name() != "ollama" {
+		t.Error("ollama")
+	}
+	if p := New("gemini", "k", "m", ""); p == nil || p.Name() != "gemini" {
+		t.Error("gemini")
+	}
+}

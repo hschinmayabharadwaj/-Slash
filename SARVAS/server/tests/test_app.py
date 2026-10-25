@@ -32,7 +32,7 @@ class FakeGitHub:
     def repo(self):
         return {"name": "proj", "full_name": "octo/proj", "owner": {"login": "octo"}, "default_branch": "main",
                 "private": False, "archived": self.archived, "description": self.description,
-                "language": "JavaScript", "permissions": {"push": self.push}}
+                "language": "JavaScript", "permissions": {"push": self.push, "pull": True}}
 
     def handle(self, req: httpx.Request) -> httpx.Response:
         def res(status, body=None):
@@ -297,7 +297,9 @@ def test_delete_flow(env):
 def test_no_write_permission_is_refused(env):
     env.gh.push = False
     env.c.sign_in()
-    res = env.c.get("/api/repos/octo/proj")
+    page = env.c.get("/api/repos/octo/proj")  # readers can open the repo (Ask / Build)...
+    assert page.status_code == 200 and page.json()["repo"]["access"] == "read"
+    res = env.c.propose()  # ...but README changes still need write access
     assert res.status_code == 400
     assert "write access" in res.json()["error"]
 
@@ -305,7 +307,7 @@ def test_no_write_permission_is_refused(env):
 def test_archived_and_non_allowlisted_repos_are_refused(env):
     env.c.sign_in()
     env.gh.archived = True
-    assert env.c.get("/api/repos/octo/proj").status_code == 400
+    assert env.c.propose().status_code == 400
     env.gh.archived = False
     env.config["security"]["allowedRepos"] = ["octo/other"]
     assert env.c.get("/api/repos/octo/proj").status_code == 400

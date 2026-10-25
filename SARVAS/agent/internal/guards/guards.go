@@ -107,7 +107,7 @@ func ScanSecrets(lines []string) []string {
 
 var (
 	control = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-	ourTags = regexp.MustCompile(`(?i)</?\s*(?:request|slack_thread|repo_conventions|plan|approved_plan|repository)\b[^>]*>`)
+	ourTags = regexp.MustCompile(`(?i)</?\s*(?:request|slack_thread|repo_conventions|plan|approved_plan|repository|excerpt|question|overview)\b[^>]*>`)
 	slugRe  = regexp.MustCompile(`[^a-z0-9]+`)
 )
 

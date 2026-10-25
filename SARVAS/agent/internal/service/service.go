@@ -1,10 +1,16 @@
 // Package service is the small HTTP service the FastAPI web server calls for
-// AI work and content checks. It never receives a user's GitHub token: the
-// web server sends only repository facts and proposed content.
+// AI work, content checks and sandboxed Build tasks. It never receives a
+// user's GitHub token: the web server sends only repository facts, retrieved
+// excerpts and proposed content; Build tasks use the GitHub App's own
+// per-repository installation tokens.
 //
 //	GET  /healthz
 //	POST /v1/readme/draft  {name, description, language, files[]} -> {markdown, provider}
 //	POST /v1/readme/check  {content}                              -> {ok, problems[]}
+//	POST /v1/ask           {repo, question, overview, chunks[]}    -> {answerable, answer, citations[], confidence}
+//	POST /v1/tasks         {owner, name, baseBranch, request, ...} -> task
+//	GET  /v1/tasks/{id}                                            -> task
+//	POST /v1/tasks/{id}/decision {stage: plan|changes, approve}    -> task
 //
 // Every /v1 call needs "Authorization: Bearer <agentService.token>".
 package service
@@ -17,11 +23,15 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"sarvas/internal/ai"
 	"sarvas/internal/config"
+	"sarvas/internal/github"
 	"sarvas/internal/guards"
+	"sarvas/internal/pipeline"
+	"sarvas/internal/sandbox"
 )
 
 const maxBody = 256 << 10
@@ -29,12 +39,27 @@ const maxBody = 256 << 10
 type Server struct {
 	Cfg      config.Config
 	Provider ai.Provider // nil when ai.provider == "sim"
+	Tasks    *pipeline.Store
+	Worker   *pipeline.Worker // nil when Build tasks aren't configured
+	// Preflight reports why sandboxed tasks can't run right now (empty = ready).
+	Preflight func() []string
+
+	sem         chan struct{}
+	mu          sync.Mutex
+	checkedAt   time.Time
+	lastProblem []string
 }
 
 func New(cfg config.Config) *Server {
-	s := &Server{Cfg: cfg}
-	if cfg.AI.Provider == "gemini" {
-		s.Provider = &ai.Gemini{APIKey: cfg.AI.APIKey, Model: cfg.AI.Model}
+	s := &Server{Cfg: cfg, Provider: ai.New(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL),
+		Tasks: pipeline.NewStore()}
+	if cfg.AppConfigured() {
+		box := sandbox.New(cfg)
+		s.Worker = &pipeline.Worker{Cfg: cfg, Store: s.Tasks, Notify: notifier{s.Tasks}, Sandbox: box,
+			WorkRoot: cfg.AgentService.WorkDir,
+			Target: &github.App{AppID: cfg.GitHub.AppID, PrivateKeyPath: cfg.GitHub.PrivateKeyPath,
+				InstallationID: cfg.GitHub.InstallationID}}
+		s.Preflight = box.Preflight
 	}
 	return s
 }
@@ -44,8 +69,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok", "provider": s.Cfg.AI.Provider})
 	})
+	mux.HandleFunc("GET /v1/capabilities", s.auth(s.capabilities))
 	mux.HandleFunc("POST /v1/readme/draft", s.auth(s.draft))
 	mux.HandleFunc("POST /v1/readme/check", s.auth(s.check))
+	mux.HandleFunc("POST /v1/ask", s.auth(s.ask))
+	mux.HandleFunc("POST /v1/tasks", s.auth(s.createTask))
+	mux.HandleFunc("GET /v1/tasks/{id}", s.auth(s.getTask))
+	mux.HandleFunc("POST /v1/tasks/{id}/decision", s.auth(s.decide))
 	return mux
 }
 
@@ -64,7 +94,7 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request)) http.Handle
 			writeJSON(w, 401, map[string]string{"error": "unauthorized"})
 			return
 		}
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if r.Method == "POST" && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 			writeJSON(w, 415, map[string]string{"error": "expected application/json"})
 			return
 		}

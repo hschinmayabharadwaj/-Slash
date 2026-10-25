@@ -53,3 +53,40 @@ pre.diff .hunk { color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+h3 { font-size: 14px; margin: 16px 0 6px; }
+.small { font-size: 13px; }
+label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+input.grow { flex: 1; min-width: 200px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--ink); font: inherit; }
+textarea.short { min-height: 90px; font: inherit; }
+.tabs { display: flex; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+.tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; font: inherit;
+  color: var(--muted); cursor: pointer; }
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.indexbar { margin-bottom: 10px; }
+.answer { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; }
+.answer .q { font-weight: 600; margin: 0 0 6px; }
+.answer .note { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 10px;
+  margin: 0 0 6px; border: 1px solid var(--bad); color: var(--bad); }
+.answer.low_confidence .note, .answer.needs_clarification .note, .answer.indexing .note { border-color: var(--muted); color: var(--muted); }
+.md p { margin: 6px 0; }
+.md ul, ul.cites { margin: 6px 0; padding-left: 20px; }
+.who { display: flex; gap: 14px; align-items: center; }
+.who img { width: 56px; height: 56px; border-radius: 50%; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 14px 0; font-size: 14px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.role, .risk { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); }
+.role.admin, .risk.high { color: var(--bad); border-color: var(--bad); }
+.role.engineer, .risk.medium { color: var(--accent); border-color: var(--accent); }
+.risk.low { color: var(--ok); border-color: var(--ok); }
+ol.steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 12px 0; counter-reset: s; }
+ol.steps li { counter-increment: s; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+ol.steps li::before { content: counter(s) ". "; }
+ol.steps li.done { color: var(--ok); border-color: var(--ok); }
+ol.steps li.now { color: #fff; background: var(--accent); border-color: var(--accent); }
+@media (max-width: 600px) {
+  .facts { grid-template-columns: 1fr; }
+  .top { flex-wrap: wrap; padding: 12px 16px; }
+  .card { padding: 16px; }
+}
