@@ -15,6 +15,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-service ./cm
 # --- Runtime: FastAPI + agent-service, as a non-root user
 FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# git: the Ask index keeps a local checkout of each repository.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY server/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

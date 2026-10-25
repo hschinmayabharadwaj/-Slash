@@ -90,6 +90,9 @@ func main() {
 			cfg.Security.AllowedRepos = append(cfg.Security.AllowedRepos, owner+"/"+name)
 		}
 		target = localTarget{abs}
+		// A local checkout has no GitHub branch protection; the result is a
+		// branch you review yourself.
+		cfg.Security.RequireProtectedBranch = false
 	} else {
 		parts := strings.SplitN(*repoArg, "/", 2)
 		if len(parts) != 2 {

@@ -12,6 +12,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +42,7 @@ type Docker struct {
 	AgentNetwork  string
 	ChecksNetwork string
 	Provider      string
+	OllamaURL     string // reachable from inside sandbox containers
 	// Exec is swappable for tests.
 	Exec func(ctx context.Context, name string, args []string, env []string) (Result, error)
 }
@@ -49,7 +52,36 @@ func New(cfg config.Config) *Docker {
 	if cfg.AI.Provider == "sim" {
 		agentNet = "none" // the offline provider needs no network at all
 	}
-	return &Docker{Cfg: cfg.Docker, AgentNetwork: agentNet, ChecksNetwork: cfg.Security.ChecksNetwork, Provider: cfg.AI.Provider}
+	d := &Docker{Cfg: cfg.Docker, AgentNetwork: agentNet, ChecksNetwork: cfg.Security.ChecksNetwork, Provider: cfg.AI.Provider}
+	if cfg.AI.Provider == "ollama" {
+		d.OllamaURL = sandboxReachable(cfg.AI.BaseURL)
+	}
+	return d
+}
+
+// sandboxReachable rewrites a service hostname (e.g. "ollama" on a Compose
+// network) to its IP, because nested sandbox containers can't use the
+// outer network's DNS. Loopback becomes the Docker host gateway.
+func sandboxReachable(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return raw
+	}
+	host := u.Hostname()
+	switch {
+	case host == "localhost" || host == "127.0.0.1":
+		host = "host.docker.internal"
+	case net.ParseIP(host) == nil:
+		if addrs, err := net.LookupHost(host); err == nil && len(addrs) > 0 {
+			host = addrs[0]
+		}
+	}
+	if p := u.Port(); p != "" {
+		u.Host = net.JoinHostPort(host, p)
+	} else {
+		u.Host = host
+	}
+	return u.String()
 }
 
 func (d *Docker) baseArgs(name, network, repoDir string, rw bool) []string {
@@ -92,6 +124,9 @@ func (d *Docker) RunAgent(mode, repoDir, ioDir string, timeout time.Duration, ap
 	args := d.baseArgs(name, d.AgentNetwork, repoDir, mode == "implement")
 	io, _ := filepath.Abs(ioDir)
 	args = append(args, "-v", io+":/io:rw", "-e", "AI_PROVIDER="+d.Provider)
+	if d.OllamaURL != "" {
+		args = append(args, "-e", "OLLAMA_URL="+d.OllamaURL, "--add-host", "host.docker.internal:host-gateway")
+	}
 	var env []string
 	if apiKey != "" {
 		// "-e NAME" with no value copies it from docker's own environment,

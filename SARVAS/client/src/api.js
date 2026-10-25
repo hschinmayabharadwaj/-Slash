@@ -28,9 +28,25 @@ export async function getSession() {
   return s;
 }
 
+const repoPath = (owner, name) => `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+const taskPath = (id) => `/api/tasks/${encodeURIComponent(id)}`;
+
 export const api = {
+  me: () => request('GET', '/api/me'),
   repos: () => request('GET', '/api/repos'),
-  repo: (owner, name) => request('GET', `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`),
+  repo: (owner, name) => request('GET', repoPath(owner, name)),
+  indexStatus: (owner, name) => request('GET', `${repoPath(owner, name)}/index`),
+  reindex: (owner, name) => request('POST', `${repoPath(owner, name)}/index`, {}),
+  ask: (owner, name, question) => request('POST', `${repoPath(owner, name)}/ask`, { question }),
+  createTask: (owner, name, req, acceptanceCriteria) =>
+    request('POST', `${repoPath(owner, name)}/tasks`, { request: req, acceptanceCriteria }),
+  tasks: () => request('GET', '/api/tasks'),
+  task: (id) => request('GET', taskPath(id)),
+  decidePlan: (id, approve) => request('POST', `${taskPath(id)}/plan`, { approve }),
+  decideChanges: (id, approve) => request('POST', `${taskPath(id)}/changes`, { approve }),
+  clarify: (id, answers) => request('POST', `${taskPath(id)}/clarify`, { answers }),
+  adminAudit: () => request('GET', '/api/admin/audit'),
+  killSwitch: (on) => request('POST', '/api/admin/kill-switch', { on }),
   draft: (owner, name) => request('POST', `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/draft`, {}),
   propose: (owner, name, action, content) =>
     request('POST', `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/proposals`, { action, content }),

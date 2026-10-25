@@ -17,21 +17,43 @@
   "agentService": {
     "addr": "127.0.0.1:8766",
     "url": "http://127.0.0.1:8766",
-    "token": "${AGENT_SERVICE_TOKEN}"
+    "token": "${AGENT_SERVICE_TOKEN}",
+    "workDir": "./data/work"
   },
   "ai": {
     "provider": "gemini",
     "apiKey": "${GEMINI_API_KEY}",
-    "model": "gemini-2.5-flash"
+    "model": "gemini-2.5-flash",
+    "baseUrl": "",
+    "sendCodeToProvider": false
+  },
+  "index": {
+    "dir": "",
+    "maxFileKb": 256,
+    "maxFiles": 5000,
+    "chunkLines": 60
   },
   "security": {
     "allowedUsers": [],
     "allowedRepos": [],
+    "roles": {
+      "admins": [],
+      "engineers": []
+    },
     "maxChangesPerHour": 10,
     "maxDraftsPerHour": 20,
+    "maxQuestionsPerHour": 60,
+    "maxTasksPerHour": 5,
     "maxReadmeChars": 50000,
     "killSwitchFile": "./data/KILL_SWITCH",
-    "protectedPaths": [".git/**", ".github/workflows/**", ".env*", "**/secrets/**", "**/*.pem", "**/*.key"],
+    "protectedPaths": [
+      ".git/**",
+      ".github/workflows/**",
+      ".env*",
+      "**/secrets/**",
+      "**/*.pem",
+      "**/*.key"
+    ],
     "maxFiles": 20,
     "maxChangedLines": 500,
     "maxFileSizeMb": 10,
@@ -39,7 +61,8 @@
     "agentNetwork": "bridge",
     "checksNetwork": "none",
     "scanSecrets": true,
-    "blockOnFailedChecks": true
+    "blockOnFailedChecks": true,
+    "requireProtectedBranch": true
   },
   "agent": {
     "maxTurns": 15,
@@ -47,7 +70,8 @@
     "implementationBudget": 80000,
     "planTimeoutS": 300,
     "implementTimeoutS": 900,
-    "checkTimeoutS": 600
+    "checkTimeoutS": 600,
+    "maxConcurrentTasks": 2
   },
   "docker": {
     "image": "sarvas-sandbox:latest",
@@ -60,7 +84,9 @@
       "defaultBranch": "main",
       "lintCommand": "",
       "testCommand": "",
-      "extraDenyPaths": ["migrations/**"]
+      "extraDenyPaths": [
+        "migrations/**"
+      ]
     }
   }
 }

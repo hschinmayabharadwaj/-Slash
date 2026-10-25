@@ -13,12 +13,24 @@ import (
 )
 
 type AI struct {
-	Provider string `json:"provider"` // "gemini" | "sim"
+	Provider string `json:"provider"` // "gemini" (remote) | "ollama" (self-hosted) | "sim" (offline)
 	APIKey   string `json:"apiKey"`
 	Model    string `json:"model"`
+	BaseURL  string `json:"baseUrl"` // ollama only, e.g. http://127.0.0.1:11434
+	// SendCode authorizes sending repository source code (Ask context, Build
+	// tasks) to a REMOTE provider. Self-hosted providers never need it.
+	SendCode bool `json:"sendCodeToProvider"`
 }
 
+// Remote reports whether prompts leave the operator's infrastructure.
+func (a AI) Remote() bool { return a.Provider == "gemini" }
+
+// CodeAllowed reports whether repository source code may be sent to the provider.
+func (a AI) CodeAllowed() bool { return !a.Remote() || a.SendCode }
+
 type GitHub struct {
+	ClientID       string `json:"clientId"`
+	ClientSecret   string `json:"clientSecret"`
 	AppID          string `json:"appId"`
 	PrivateKeyPath string `json:"privateKeyPath"`
 	InstallationID string `json:"installationId"`
@@ -26,19 +38,45 @@ type GitHub struct {
 	AuthorEmail    string `json:"commitAuthorEmail"`
 }
 
+// StringList is a JSON array of strings, or one comma-separated string (so
+// it can come from an environment variable such as "${SARVAS_ALLOWED_REPOS}").
+type StringList []string
+
+func (l *StringList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*l = list
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return errors.New("expected a list of strings or a comma-separated string")
+	}
+	*l = nil
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			*l = append(*l, part)
+		}
+	}
+	return nil
+}
+
 type Security struct {
-	AllowedRepos        []string `json:"allowedRepos"`
-	ProtectedPaths      []string `json:"protectedPaths"`
-	MaxFiles            int      `json:"maxFiles"`
-	MaxChangedLines     int      `json:"maxChangedLines"`
-	MaxFileSizeMB       int      `json:"maxFileSizeMb"`
-	MaxRequestChars     int      `json:"maxRequestChars"`
-	AgentNetwork        string   `json:"agentNetwork"` // network for the agent container
-	ChecksNetwork       string   `json:"checksNetwork"`
-	ScanSecrets         bool     `json:"scanSecrets"`
-	BlockOnFailedChecks bool     `json:"blockOnFailedChecks"`
-	KillSwitchFile      string   `json:"killSwitchFile"`
-	MaxReadmeChars      int      `json:"maxReadmeChars"`
+	AllowedRepos        StringList `json:"allowedRepos"`
+	ProtectedPaths      StringList `json:"protectedPaths"`
+	MaxFiles            int        `json:"maxFiles"`
+	MaxChangedLines     int        `json:"maxChangedLines"`
+	MaxFileSizeMB       int        `json:"maxFileSizeMb"`
+	MaxRequestChars     int        `json:"maxRequestChars"`
+	AgentNetwork        string     `json:"agentNetwork"` // network for the agent container
+	ChecksNetwork       string     `json:"checksNetwork"`
+	ScanSecrets         bool       `json:"scanSecrets"`
+	BlockOnFailedChecks bool       `json:"blockOnFailedChecks"`
+	KillSwitchFile      string     `json:"killSwitchFile"`
+	MaxReadmeChars      int        `json:"maxReadmeChars"`
+	// RequireProtectedBranch refuses to open a PR against a base branch that
+	// GitHub doesn't protect with a pull-request rule (so a human must review).
+	RequireProtectedBranch bool `json:"requireProtectedBranch"`
 }
 
 type Agent struct {
@@ -48,6 +86,7 @@ type Agent struct {
 	PlanTimeoutS         int `json:"planTimeoutS"`
 	ImplementTimeoutS    int `json:"implementTimeoutS"`
 	CheckTimeoutS        int `json:"checkTimeoutS"`
+	MaxConcurrentTasks   int `json:"maxConcurrentTasks"`
 }
 
 type Docker struct {
@@ -58,8 +97,9 @@ type Docker struct {
 }
 
 type Service struct {
-	Addr  string `json:"addr"`  // agent-service listen address (loopback)
-	Token string `json:"token"` // shared bearer token with the web server
+	Addr    string `json:"addr"`    // agent-service listen address (loopback)
+	Token   string `json:"token"`   // shared bearer token with the web server
+	WorkDir string `json:"workDir"` // task checkouts (deleted after each phase)
 }
 
 type Repo struct {
@@ -97,13 +137,14 @@ func Default() Config {
 			MaxFiles: 20, MaxChangedLines: 500, MaxFileSizeMB: 10, MaxRequestChars: 2000,
 			AgentNetwork: "bridge", ChecksNetwork: "none", ScanSecrets: true,
 			BlockOnFailedChecks: true, KillSwitchFile: "./data/KILL_SWITCH", MaxReadmeChars: 50000,
+			RequireProtectedBranch: true,
 		},
 		Agent: Agent{
 			MaxTurns: 15, PlanningBudget: 20000, ImplementationBudget: 80000,
-			PlanTimeoutS: 300, ImplementTimeoutS: 900, CheckTimeoutS: 600,
+			PlanTimeoutS: 300, ImplementTimeoutS: 900, CheckTimeoutS: 600, MaxConcurrentTasks: 2,
 		},
 		Docker:       Docker{Image: "sarvas-sandbox:latest", MemoryLimit: "1g", CPULimit: "1.0", PidsLimit: 128},
-		AgentService: Service{Addr: "127.0.0.1:8766"},
+		AgentService: Service{Addr: "127.0.0.1:8766", WorkDir: "./data/work"},
 		Repos:        map[string]Repo{},
 	}
 }
@@ -152,12 +193,33 @@ func Load(path string) (Config, error) {
 	if cfg.AI.APIKey == "" {
 		cfg.AI.APIKey = os.Getenv("GEMINI_API_KEY")
 	}
+	if v := os.Getenv("OLLAMA_URL"); v != "" && cfg.AI.BaseURL == "" {
+		cfg.AI.BaseURL = v
+	}
+	if v := os.Getenv("AI_MODEL"); v != "" {
+		cfg.AI.Model = v
+	}
+	if v := os.Getenv("AI_SEND_CODE"); v != "" {
+		cfg.AI.SendCode = v == "true" || v == "1"
+	}
+	if cfg.AI.Provider == "gemini" && cfg.AI.Model == "" {
+		cfg.AI.Model = "gemini-2.5-flash"
+	}
+	if cfg.AI.Provider == "ollama" && cfg.AI.BaseURL == "" {
+		cfg.AI.BaseURL = "http://127.0.0.1:11434"
+	}
+	if cfg.GitHub.ClientID == "" {
+		cfg.GitHub.ClientID = os.Getenv("GITHUB_CLIENT_ID")
+	}
+	if cfg.GitHub.ClientSecret == "" {
+		cfg.GitHub.ClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
+	}
 	if cfg.AgentService.Token == "" {
 		cfg.AgentService.Token = os.Getenv("AGENT_SERVICE_TOKEN")
 	}
 	// Relative paths are relative to the config file, not the working directory.
 	dir := filepath.Dir(path)
-	for _, p := range []*string{&cfg.Security.KillSwitchFile, &cfg.GitHub.PrivateKeyPath} {
+	for _, p := range []*string{&cfg.Security.KillSwitchFile, &cfg.GitHub.PrivateKeyPath, &cfg.AgentService.WorkDir} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -172,8 +234,12 @@ func (c Config) Validate() error {
 		if len(c.AI.APIKey) < 10 {
 			return errors.New("ai.apiKey (GEMINI_API_KEY) is missing or looks invalid")
 		}
+	case "ollama":
+		if c.AI.Model == "" || c.AI.Model == "gemini-2.5-flash" {
+			return errors.New("ai.model must name an Ollama model (e.g. qwen2.5-coder:7b) when ai.provider is ollama")
+		}
 	default:
-		return fmt.Errorf("ai.provider must be gemini or sim, got %q", c.AI.Provider)
+		return fmt.Errorf("ai.provider must be gemini, ollama or sim, got %q", c.AI.Provider)
 	}
 	for name, v := range map[string]string{"agentNetwork": c.Security.AgentNetwork, "checksNetwork": c.Security.ChecksNetwork} {
 		if v != "none" && v != "bridge" {
@@ -184,6 +250,12 @@ func (c Config) Validate() error {
 		return errors.New("agent token budgets are unreasonably large")
 	}
 	return nil
+}
+
+// AppConfigured reports whether installation-level GitHub App access (needed
+// to clone private repos and open PRs from Build tasks) is configured.
+func (c Config) AppConfigured() bool {
+	return c.GitHub.AppID != "" && c.GitHub.PrivateKeyPath != ""
 }
 
 // Repo returns per-repo settings with defaults applied.

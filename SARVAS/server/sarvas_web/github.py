@@ -101,6 +101,30 @@ class GitHubUser:
     def get_user(self) -> dict:
         return self.call("GET", "/user")
 
+    def _optional(self, path: str):
+        """None when the App wasn't granted this (user) permission."""
+        try:
+            return self.call("GET", path, query={"per_page": 100})
+        except GitHubError as e:
+            if e.status in (403, 404):
+                return None
+            raise
+
+    def get_emails(self) -> list[dict] | None:
+        """Needs the App's "Email addresses: read" account permission."""
+        data = self._optional("/user/emails")
+        return None if data is None else [e for e in data if isinstance(e, dict)]
+
+    def get_orgs(self) -> list[str] | None:
+        data = self._optional("/user/orgs")
+        return None if data is None else [o["login"] for o in data if isinstance(o, dict) and o.get("login")]
+
+    def installations(self) -> list[dict]:
+        """Accounts (users/orgs) where the App is installed and this user has access."""
+        data = self.call("GET", "/user/installations", query={"per_page": 100}).get("installations", [])
+        return [{"id": i["id"], "account": i["account"]["login"], "type": i["account"].get("type", ""),
+                 "repositorySelection": i.get("repository_selection", "")} for i in data]
+
     def list_repos(self, limit: int = 300) -> list[dict]:
         """Repos where the App is installed AND this user has access."""
         repos: list[dict] = []

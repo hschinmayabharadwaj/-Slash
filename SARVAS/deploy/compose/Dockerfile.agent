@@ -1,0 +1,21 @@
+# SARVAS agent-service: AI calls, guardrails and the sandboxed Build pipeline.
+# It talks to the isolated Docker daemon (sandbox-docker) over mutual TLS and
+# never sees a user's GitHub token.
+FROM golang:1.24-bookworm AS build
+WORKDIR /src
+COPY agent/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-service ./cmd/agent-service
+
+FROM docker:27.5.1-cli AS dockercli
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=build /out/agent-service /usr/local/bin/agent-service
+RUN useradd -m -u 1000 -s /usr/sbin/nologin agent && mkdir -p /data/work && chown agent:agent /data/work
+USER agent
+EXPOSE 8766
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8766"]
+CMD ["agent-service", "-config", "/etc/sarvas/config.json"]

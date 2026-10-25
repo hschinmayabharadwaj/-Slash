@@ -101,3 +101,73 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, jsonMode bool) (st
 	}
 	return b.String(), out.UsageMetadata.TotalTokenCount, nil
 }
+
+// Ollama calls a self-hosted Ollama server, so prompts (and any repository
+// code in them) stay on the operator's infrastructure.
+type Ollama struct {
+	BaseURL string // e.g. http://127.0.0.1:11434
+	Model   string
+	HTTP    *http.Client
+}
+
+func (o *Ollama) Name() string { return "ollama" }
+
+func (o *Ollama) Generate(ctx context.Context, prompt string, jsonMode bool) (string, int, error) {
+	if o.BaseURL == "" || o.Model == "" {
+		return "", 0, errors.New("ollama needs ai.baseUrl and ai.model")
+	}
+	payload := map[string]any{
+		"model":    o.Model,
+		"messages": []any{map[string]string{"role": "user", "content": prompt}},
+		"stream":   false,
+		"options":  map[string]any{"temperature": 0.2},
+	}
+	if jsonMode {
+		payload["format"] = "json"
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(o.BaseURL, "/")+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return "", 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := o.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Minute} // local models can be slow
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, errors.New("could not reach the Ollama server")
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		PromptEvalCount int    `json:"prompt_eval_count"`
+		EvalCount       int    `json:"eval_count"`
+		Error           string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", 0, fmt.Errorf("unreadable Ollama response (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode >= 300 || out.Error != "" {
+		msg := out.Error
+		if len(msg) > 200 {
+			msg = msg[:200]
+		}
+		return "", 0, fmt.Errorf("Ollama error (HTTP %d): %s", resp.StatusCode, msg)
+	}
+	return out.Message.Content, out.PromptEvalCount + out.EvalCount, nil
+}
+
+// New returns the configured provider, or nil for the offline "sim" provider.
+func New(provider, apiKey, model, baseURL string) Provider {
+	switch provider {
+	case "gemini":
+		return &Gemini{APIKey: apiKey, Model: model}
+	case "ollama":
+		return &Ollama{BaseURL: baseURL, Model: model}
+	}
+	return nil
+}

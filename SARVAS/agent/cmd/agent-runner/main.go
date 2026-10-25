@@ -55,9 +55,8 @@ func run(mode, inputPath, workspace string) runner.Output {
 	}
 	var provider ai.Provider
 	switch in.Provider {
-	case "sim":
-	case "gemini":
-		provider = &ai.Gemini{APIKey: os.Getenv("GEMINI_API_KEY"), Model: in.Model}
+	case "sim", "gemini", "ollama":
+		provider = ai.New(in.Provider, os.Getenv("GEMINI_API_KEY"), in.Model, os.Getenv("OLLAMA_URL"))
 	default:
 		return runner.Output{Mode: mode, Error: fmt.Sprintf("unknown AI provider %q", in.Provider)}
 	}

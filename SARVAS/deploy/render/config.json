@@ -24,7 +24,8 @@
   },
   "security": {
     "allowedUsers": "${SARVAS_ALLOWED_USERS}",
-    "allowedRepos": [],
+    "allowedRepos": "${SARVAS_ALLOWED_REPOS}",
+    "roles": {"admins": "${SARVAS_ADMINS}", "engineers": "${SARVAS_ENGINEERS}"},
     "maxChangesPerHour": 10,
     "maxDraftsPerHour": 20,
     "maxReadmeChars": 50000,

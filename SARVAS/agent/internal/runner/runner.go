@@ -281,8 +281,11 @@ const planInstructions = `Investigate the repository (read-only), then finish wi
   "risk": "low" | "medium" | "high",
   "risk_reason": "one sentence explaining the risk level",
   "questions": ["questions you need answered before proceeding (empty if none)"],
-  "how_to_verify": "how a non-engineer can check the result works"
+  "how_to_verify": "how a non-engineer can check the result works",
+  "acceptance_criteria": ["3-6 short, checkable statements that are true when the change is done"]
 }
+Ask questions instead of guessing when the request is ambiguous (which page,
+which behaviour, what exact wording), or when the code it refers to doesn't exist.
 Set feasible=false if the request is too large or ambiguous, or touches
 authentication, payments, infrastructure, CI, or credentials.`
 
@@ -360,9 +363,10 @@ func (s Sim) Turn(_ context.Context, _ string, turn int) (string, int, error) {
 			"summary": "SIM MODE (no AI model): will add a short note to AGENT_SIM.md recording this request, " +
 				"to exercise the approval flow.",
 			"files": []string{"AGENT_SIM.md"}, "risk": "low",
-			"risk_reason":   "Documentation-only change made by the offline simulator.",
-			"questions":     []string{},
-			"how_to_verify": "Open AGENT_SIM.md in the pull request.",
+			"risk_reason":         "Documentation-only change made by the offline simulator.",
+			"questions":           []string{},
+			"how_to_verify":       "Open AGENT_SIM.md in the pull request.",
+			"acceptance_criteria": []string{"AGENT_SIM.md exists and quotes the request"},
 		}})
 	}
 	if turn == 2 {

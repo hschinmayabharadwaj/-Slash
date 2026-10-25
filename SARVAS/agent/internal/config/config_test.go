@@ -45,3 +45,41 @@ func TestRepoAllowlist(t *testing.T) {
 		t.Fatal("allowlist")
 	}
 }
+
+func TestListsFromEnvStrings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("REPOS", " acme/web , acme/api,,")
+	os.WriteFile(path, []byte(`{"ai":{"provider":"sim"},"security":{"allowedRepos":"${REPOS}"}}`), 0o600)
+	cfg, err := Load(path)
+	if err != nil || len(cfg.Security.AllowedRepos) != 2 || !cfg.RepoAllowed("ACME/api") || cfg.RepoAllowed("acme/other") {
+		t.Fatalf("%v %v", cfg.Security.AllowedRepos, err)
+	}
+	t.Setenv("REPOS", "")
+	if cfg, _ := Load(path); len(cfg.Security.AllowedRepos) != 0 || !cfg.RepoAllowed("any/repo") {
+		t.Fatal("empty env must mean no allowlist")
+	}
+}
+
+func TestOllamaNeedsAModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(`{"ai":{"provider":"ollama"}}`), 0o600)
+	if _, err := Load(path); err == nil {
+		t.Fatal("ollama without a model must be rejected")
+	}
+	os.WriteFile(path, []byte(`{"ai":{"provider":"ollama","model":"qwen2.5-coder:7b"}}`), 0o600)
+	cfg, err := Load(path)
+	if err != nil || cfg.AI.BaseURL == "" || cfg.AI.Remote() || !cfg.AI.CodeAllowed() {
+		t.Fatalf("%+v %v", cfg.AI, err)
+	}
+}
+
+func TestRemoteProviderNeedsConsentForCode(t *testing.T) {
+	ai := AI{Provider: "gemini"}
+	if ai.CodeAllowed() {
+		t.Fatal("remote provider must not get code without consent")
+	}
+	ai.SendCode = true
+	if !ai.CodeAllowed() {
+		t.Fatal("consent ignored")
+	}
+}

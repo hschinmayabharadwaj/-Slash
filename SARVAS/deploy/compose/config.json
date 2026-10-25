@@ -1,0 +1,73 @@
+{
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8765,
+    "baseUrl": "${SARVAS_PUBLIC_URL}",
+    "sessionHours": 8,
+    "dataDir": "/data/web",
+    "clientDist": "/app/client/dist"
+  },
+  "github": {
+    "clientId": "${GITHUB_CLIENT_ID}",
+    "clientSecret": "${GITHUB_CLIENT_SECRET}",
+    "appId": "${GITHUB_APP_ID}",
+    "privateKeyPath": "${GITHUB_PRIVATE_KEY_PATH}"
+  },
+  "agentService": {
+    "addr": "0.0.0.0:8766",
+    "url": "http://agent:8766",
+    "token": "${AGENT_SERVICE_TOKEN}",
+    "workDir": "/data/work"
+  },
+  "ai": {
+    "provider": "${AI_PROVIDER}",
+    "apiKey": "${GEMINI_API_KEY}",
+    "model": "${AI_MODEL}",
+    "baseUrl": "${OLLAMA_URL}"
+  },
+  "index": {
+    "dir": "/data/web/repos",
+    "maxFileKb": 256,
+    "maxFiles": 5000
+  },
+  "security": {
+    "allowedUsers": "${SARVAS_ALLOWED_USERS}",
+    "allowedRepos": "${SARVAS_ALLOWED_REPOS}",
+    "roles": {
+      "admins": "${SARVAS_ADMINS}",
+      "engineers": "${SARVAS_ENGINEERS}"
+    },
+    "killSwitchFile": "/data/control/KILL_SWITCH",
+    "requireProtectedBranch": true,
+    "maxChangesPerHour": 10,
+    "maxDraftsPerHour": 20,
+    "maxQuestionsPerHour": 60,
+    "maxTasksPerHour": 5,
+    "maxReadmeChars": 50000,
+    "protectedPaths": [".git/**", ".github/workflows/**", ".env*", "**/secrets/**", "**/*.pem", "**/*.key"],
+    "maxFiles": 20,
+    "maxChangedLines": 500,
+    "maxFileSizeMb": 10,
+    "maxRequestChars": 2000,
+    "agentNetwork": "bridge",
+    "checksNetwork": "none",
+    "scanSecrets": true,
+    "blockOnFailedChecks": true
+  },
+  "agent": {
+    "maxTurns": 15,
+    "planningBudget": 20000,
+    "implementationBudget": 80000,
+    "planTimeoutS": 300,
+    "implementTimeoutS": 900,
+    "checkTimeoutS": 600,
+    "maxConcurrentTasks": 2
+  },
+  "docker": {
+    "image": "sarvas-sandbox:latest",
+    "memoryLimit": "1g",
+    "cpuLimit": "1.0",
+    "pidsLimit": 128
+  },
+  "repos": {}
+}
