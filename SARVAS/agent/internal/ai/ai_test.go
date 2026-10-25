@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGeminiRequestShape(t *testing.T) {
@@ -41,6 +42,34 @@ func TestGeminiErrorDoesNotLeakKey(t *testing.T) {
 	_, _, err := (&Gemini{APIKey: "AIzaKEY12345", BaseURL: srv.URL}).Generate(context.Background(), "hi", false)
 	if err == nil || strings.Contains(err.Error(), "AIzaKEY12345") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestGeminiRetriesOverload(t *testing.T) {
+	saved := geminiBackoff
+	geminiBackoff = []time.Duration{0, 0}
+	defer func() { geminiBackoff = saved }()
+
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(503)
+			w.Write([]byte(`{"error":{"message":"high demand"}}`))
+			return
+		}
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer srv.Close()
+	text, _, err := (&Gemini{APIKey: "k", BaseURL: srv.URL}).Generate(context.Background(), "hi", false)
+	if err != nil || text != "ok" || calls != 3 {
+		t.Fatalf("text=%q calls=%d err=%v", text, calls, err)
+	}
+
+	calls = -10 // always overloaded: gives up after the last backoff
+	_, _, err = (&Gemini{APIKey: "k", BaseURL: srv.URL}).Generate(context.Background(), "hi", false)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 503") || calls != -7 {
+		t.Fatalf("calls=%d err=%v", calls, err)
 	}
 }
 

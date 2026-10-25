@@ -29,6 +29,18 @@ type Gemini struct {
 
 func (g *Gemini) Name() string { return "gemini" }
 
+// geminiBackoff is the wait before each retry of an overloaded request (tests shorten it).
+var geminiBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second}
+
+func retryable(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
 func (g *Gemini) Generate(ctx context.Context, prompt string, jsonMode bool) (string, int, error) {
 	if g.APIKey == "" {
 		return "", 0, errors.New("GEMINI_API_KEY is not set")
@@ -49,20 +61,33 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, jsonMode bool) (st
 		"contents":         []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": prompt}}}},
 		"generationConfig": genCfg,
 	})
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, model), bytes.NewReader(body))
-	if err != nil {
-		return "", 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", g.APIKey) // header, never the URL (keeps it out of logs)
 	client := g.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 120 * time.Second}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, errors.New("could not reach the Gemini API")
+	// Overload and rate-limit answers are usually brief, so retry them with backoff.
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, model), bytes.NewReader(body))
+		if err != nil {
+			return "", 0, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-api-key", g.APIKey) // header, never the URL (keeps it out of logs)
+		resp, err = client.Do(req)
+		if err != nil {
+			return "", 0, errors.New("could not reach the Gemini API")
+		}
+		if !retryable(resp.StatusCode) || attempt == len(geminiBackoff) {
+			break
+		}
+		resp.Body.Close()
+		select {
+		case <-ctx.Done():
+			return "", 0, ctx.Err()
+		case <-time.After(geminiBackoff[attempt]):
+		}
 	}
 	defer resp.Body.Close()
 	var out struct {
