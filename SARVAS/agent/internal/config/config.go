@@ -125,10 +125,12 @@ type Config struct {
 // Default returns the built-in defaults (secure by default).
 func Default() Config {
 	return Config{
-		AI: AI{Provider: "gemini", Model: "gemini-2.5-flash"},
+		AI: AI{Provider: "gemini", Model: "gemini-3.8-flash"},
 		GitHub: GitHub{
-			AuthorName:  "sarvas[bot]",
-			AuthorEmail: "sarvas@users.noreply.github.com",
+			AuthorName: "sarvas[bot]",
+			// .invalid is reserved (RFC 2606), so GitHub can never link these
+			// commits to someone's account.
+			AuthorEmail: "agent@sarvas.invalid",
 		},
 		Security: Security{
 			ProtectedPaths: []string{
@@ -203,7 +205,7 @@ func Load(path string) (Config, error) {
 		cfg.AI.SendCode = v == "true" || v == "1"
 	}
 	if cfg.AI.Provider == "gemini" && cfg.AI.Model == "" {
-		cfg.AI.Model = "gemini-2.5-flash"
+		cfg.AI.Model = "gemini-3.8-flash"
 	}
 	if cfg.AI.Provider == "ollama" && cfg.AI.BaseURL == "" {
 		cfg.AI.BaseURL = "http://127.0.0.1:11434"
@@ -227,6 +229,8 @@ func Load(path string) (Config, error) {
 	return cfg, cfg.Validate()
 }
 
+var idNoreply = regexp.MustCompile(`^[0-9]+\+[^@]+@users\.noreply\.github\.com$`)
+
 func (c Config) Validate() error {
 	switch c.AI.Provider {
 	case "sim":
@@ -235,7 +239,7 @@ func (c Config) Validate() error {
 			return errors.New("ai.apiKey (GEMINI_API_KEY) is missing or looks invalid")
 		}
 	case "ollama":
-		if c.AI.Model == "" || c.AI.Model == "gemini-2.5-flash" {
+		if c.AI.Model == "" || c.AI.Model == "gemini-3.8-flash" {
 			return errors.New("ai.model must name an Ollama model (e.g. qwen2.5-coder:7b) when ai.provider is ollama")
 		}
 	default:
@@ -245,6 +249,14 @@ func (c Config) Validate() error {
 		if v != "none" && v != "bridge" {
 			return fmt.Errorf("security.%s must be none or bridge, got %q", name, v)
 		}
+	}
+	// GitHub credits "<login>@users.noreply.github.com" to the account named
+	// <login>, so only the ID-prefixed form ("<id>+<login>@…", e.g. the App
+	// bot's own address) is unambiguous.
+	if e := strings.ToLower(c.GitHub.AuthorEmail); strings.HasSuffix(e, "@users.noreply.github.com") &&
+		!idNoreply.MatchString(e) {
+		return fmt.Errorf("github.commitAuthorEmail %q would credit commits to whichever GitHub user owns that name; "+
+			"use the App bot's \"<id>+<slug>[bot]@users.noreply.github.com\" address or a non-GitHub address", c.GitHub.AuthorEmail)
 	}
 	if c.Agent.PlanningBudget+c.Agent.ImplementationBudget > 1_000_000 {
 		return errors.New("agent token budgets are unreasonably large")

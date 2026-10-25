@@ -83,3 +83,15 @@ func TestRemoteProviderNeedsConsentForCode(t *testing.T) {
 		t.Fatal("consent ignored")
 	}
 }
+
+func TestCommitEmailCannotBeClaimedByAStranger(t *testing.T) {
+	if _, err := Load(write(t, `{"ai":{"provider":"sim"}}`)); err != nil {
+		t.Fatalf("default author email rejected: %v", err)
+	}
+	if _, err := Load(write(t, `{"ai":{"provider":"sim"},"github":{"commitAuthorEmail":"sarvas@users.noreply.github.com"}}`)); err == nil {
+		t.Error("accepted a login-only noreply address")
+	}
+	if _, err := Load(write(t, `{"ai":{"provider":"sim"},"github":{"commitAuthorEmail":"41898282+my-app[bot]@users.noreply.github.com"}}`)); err != nil {
+		t.Errorf("rejected an ID-prefixed bot address: %v", err)
+	}
+}

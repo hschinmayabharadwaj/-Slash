@@ -294,7 +294,7 @@ def interactive(v: dict[str, str]) -> dict[str, str]:
                                   "http://host.docker.internal:11434")
         v["AI_SEND_CODE"] = "false"
     elif v["AI_PROVIDER"] == "gemini":
-        v["AI_MODEL"] = ask("Gemini model", "gemini-2.5-flash")
+        v["AI_MODEL"] = ask("Gemini model", "gemini-3.8-flash")
         v["GEMINI_API_KEY"] = ask("Gemini API key", v.get("GEMINI_API_KEY", ""), secret=True, required=True)
         say("  Ask sends retrieved code excerpts, and Build sends the files the agent reads, to Google.")
         v["AI_SEND_CODE"] = "true" if yes("Authorize sending repository code to Gemini?") else "false"

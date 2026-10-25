@@ -35,7 +35,7 @@ func (g *Gemini) Generate(ctx context.Context, prompt string, jsonMode bool) (st
 	}
 	model := g.Model
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.8-flash"
 	}
 	base := g.BaseURL
 	if base == "" {

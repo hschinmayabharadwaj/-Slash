@@ -161,7 +161,7 @@ substituted from the environment).
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub App OAuth credentials (sign-in) |
 | `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY_FILE` | Installation access for Build tasks (leave the ID empty to disable Build) |
 | `AI_PROVIDER` | `ollama`, `gemini` or `sim` |
-| `AI_MODEL` | e.g. `qwen2.5-coder:7b` (Ollama) or `gemini-2.5-flash` |
+| `AI_MODEL` | e.g. `qwen2.5-coder:7b` (Ollama) or `gemini-3.8-flash` |
 | `OLLAMA_URL` | `http://ollama:11434` for the bundled server, or your own |
 | `GEMINI_API_KEY` | Only for Gemini |
 | `AI_SEND_CODE` | `true` authorizes sending repository code (Ask excerpts, Build files) to a **remote** provider. Off by default; never needed for Ollama |
