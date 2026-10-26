@@ -13,17 +13,17 @@ import (
 )
 
 type AI struct {
-	Provider string `json:"provider"` // "gemini" (remote) | "ollama" (self-hosted) | "sim" (offline)
+	Provider string `json:"provider"` // "gemini" | "openai" (any OpenAI-compatible API) | "ollama" (self-hosted) | "sim" (offline)
 	APIKey   string `json:"apiKey"`
 	Model    string `json:"model"`
-	BaseURL  string `json:"baseUrl"` // ollama only, e.g. http://127.0.0.1:11434
+	BaseURL  string `json:"baseUrl"` // ollama (http://127.0.0.1:11434) or openai (https://api.fireworks.ai/inference/v1)
 	// SendCode authorizes sending repository source code (Ask context, Build
 	// tasks) to a REMOTE provider. Self-hosted providers never need it.
 	SendCode bool `json:"sendCodeToProvider"`
 }
 
 // Remote reports whether prompts leave the operator's infrastructure.
-func (a AI) Remote() bool { return a.Provider == "gemini" }
+func (a AI) Remote() bool { return a.Provider == "gemini" || a.Provider == "openai" }
 
 // CodeAllowed reports whether repository source code may be sent to the provider.
 func (a AI) CodeAllowed() bool { return !a.Remote() || a.SendCode }
@@ -193,7 +193,13 @@ func Load(path string) (Config, error) {
 		cfg.AI.Provider = p
 	}
 	if cfg.AI.APIKey == "" {
+		cfg.AI.APIKey = os.Getenv("AI_API_KEY")
+	}
+	if cfg.AI.APIKey == "" {
 		cfg.AI.APIKey = os.Getenv("GEMINI_API_KEY")
+	}
+	if v := os.Getenv("AI_BASE_URL"); v != "" {
+		cfg.AI.BaseURL = v
 	}
 	if v := os.Getenv("OLLAMA_URL"); v != "" && cfg.AI.BaseURL == "" {
 		cfg.AI.BaseURL = v
@@ -242,8 +248,12 @@ func (c Config) Validate() error {
 		if c.AI.Model == "" || c.AI.Model == "gemini-3.8-flash" {
 			return errors.New("ai.model must name an Ollama model (e.g. qwen2.5-coder:7b) when ai.provider is ollama")
 		}
+	case "openai":
+		if !strings.HasPrefix(c.AI.BaseURL, "http") || c.AI.Model == "" || c.AI.Model == "gemini-3.8-flash" {
+			return errors.New("ai.provider openai needs ai.baseUrl (AI_BASE_URL, e.g. https://api.fireworks.ai/inference/v1) and ai.model (AI_MODEL)")
+		}
 	default:
-		return fmt.Errorf("ai.provider must be gemini, ollama or sim, got %q", c.AI.Provider)
+		return fmt.Errorf("ai.provider must be gemini, openai, ollama or sim, got %q", c.AI.Provider)
 	}
 	for name, v := range map[string]string{"agentNetwork": c.Security.AgentNetwork, "checksNetwork": c.Security.ChecksNetwork} {
 		if v != "none" && v != "bridge" {

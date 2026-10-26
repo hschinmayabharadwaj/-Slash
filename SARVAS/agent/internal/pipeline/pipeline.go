@@ -349,7 +349,7 @@ func (w *Worker) agentInput(t *Task, mode string) runner.Input {
 }
 
 func (w *Worker) apiKey() string {
-	if w.Cfg.AI.Provider == "gemini" {
+	if w.Cfg.AI.Remote() {
 		return w.Cfg.AI.APIKey
 	}
 	return ""
@@ -370,7 +370,8 @@ func (w *Worker) runAgent(t *Task, mode, repoDir, ioDir string, timeoutS int) (r
 		return out, err
 	}
 	if res.TimedOut {
-		return out, &Abort{"That took longer than my time limit, so I stopped. Try a smaller request.", Failed}
+		return out, &Abort{fmt.Sprintf("That took longer than my %ds time limit, so I stopped. Try again, make the request smaller, "+
+			"or raise agent.%sTimeoutS in config.json.", timeoutS, mode), Failed}
 	}
 	data, err := os.ReadFile(filepath.Join(ioDir, "output.json"))
 	if err != nil {

@@ -179,6 +179,12 @@ def check_values(v: dict[str, str]) -> bool:
             warn("AI_SEND_CODE=true: repository excerpts and Build tasks are sent to Google")
         else:
             warn("AI_SEND_CODE is off: with Gemini, Ask and Build stay disabled (README drafting works)")
+    elif provider == "openai":
+        if not v.get("AI_BASE_URL", "").startswith("http") or not v.get("AI_MODEL"):
+            fail("AI_PROVIDER=openai needs AI_BASE_URL and AI_MODEL")
+            good = False
+        if v.get("AI_SEND_CODE") != "true":
+            warn("AI_SEND_CODE is off: with a remote API, Ask and Build stay disabled (README drafting works)")
     elif provider == "ollama":
         if not v.get("AI_MODEL"):
             fail("AI_MODEL must name an Ollama model")
@@ -188,7 +194,7 @@ def check_values(v: dict[str, str]) -> bool:
     elif provider == "sim":
         warn("AI_PROVIDER=sim: placeholder answers and changes only")
     else:
-        fail("AI_PROVIDER must be ollama, gemini or sim")
+        fail("AI_PROVIDER must be ollama, gemini, openai or sim")
         good = False
     data = (ROOT / v.get("SARVAS_DATA_DIR", "./data")).resolve()
     for sub in ("web", "work", "control", "ollama"):
@@ -280,9 +286,10 @@ def interactive(v: dict[str, str]) -> dict[str, str]:
     say("  1) ollama  — self-hosted; repository code never leaves your infrastructure (recommended)")
     say("  2) gemini  — Google's API; code is sent there only if you explicitly allow it")
     say("  3) sim     — offline placeholder to try the workflow")
-    current = {"ollama": "1", "gemini": "2", "sim": "3"}.get(v.get("AI_PROVIDER", "ollama"), "1")
-    choice = ask("Choose 1, 2 or 3", current, check=lambda s: None if s in ("1", "2", "3") else "Pick 1, 2 or 3.")
-    v["AI_PROVIDER"] = {"1": "ollama", "2": "gemini", "3": "sim"}[choice]
+    say("  4) openai  — any OpenAI-compatible API: Baseten, Fireworks, vLLM on Modal, ...")
+    current = {"ollama": "1", "gemini": "2", "sim": "3", "openai": "4"}.get(v.get("AI_PROVIDER", "ollama"), "1")
+    choice = ask("Choose 1-4", current, check=lambda s: None if s in ("1", "2", "3", "4") else "Pick 1, 2, 3 or 4.")
+    v["AI_PROVIDER"] = {"1": "ollama", "2": "gemini", "3": "sim", "4": "openai"}[choice]
     if v["AI_PROVIDER"] == "ollama":
         v["AI_MODEL"] = ask("Ollama model", v.get("AI_MODEL") if v.get("AI_MODEL", "").find("gemini") < 0
                             and v.get("AI_MODEL") else "qwen2.5-coder:7b")
@@ -298,6 +305,15 @@ def interactive(v: dict[str, str]) -> dict[str, str]:
         v["GEMINI_API_KEY"] = ask("Gemini API key", v.get("GEMINI_API_KEY", ""), secret=True, required=True)
         say("  Ask sends retrieved code excerpts, and Build sends the files the agent reads, to Google.")
         v["AI_SEND_CODE"] = "true" if yes("Authorize sending repository code to Gemini?") else "false"
+    elif v["AI_PROVIDER"] == "openai":
+        say("  Baseten   https://inference.baseten.co/v1")
+        say("  Fireworks https://api.fireworks.ai/inference/v1")
+        say("  Modal     https://<workspace>--<app>.modal.run/v1 (your vLLM endpoint)")
+        v["AI_BASE_URL"] = ask("API base URL (up to /v1)", v.get("AI_BASE_URL", ""), required=True)
+        v["AI_MODEL"] = ask("Model ID", v.get("AI_MODEL", ""), required=True)
+        v["AI_API_KEY"] = ask("API key", v.get("AI_API_KEY", ""), secret=True, required=True)
+        say("  Ask sends retrieved code excerpts, and Build sends the files the agent reads, to that API.")
+        v["AI_SEND_CODE"] = "true" if yes("Authorize sending repository code to it?") else "false"
     else:
         v["AI_MODEL"] = ""
 

@@ -41,7 +41,7 @@ func TestAPIKeyNeverInArgv(t *testing.T) {
 	if strings.Contains(strings.Join(c.args, " "), "AIzaSECRET") {
 		t.Fatal("key in argv")
 	}
-	if strings.Join(c.env, ",") != "GEMINI_API_KEY=AIzaSECRET" {
+	if strings.Join(c.env, ",") != "AI_API_KEY=AIzaSECRET" {
 		t.Fatalf("env %v", c.env)
 	}
 }
@@ -94,4 +94,12 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+func TestHostedModelURLKeepsItsName(t *testing.T) {
+	cfg := config.Default()
+	cfg.AI = config.AI{Provider: "openai", BaseURL: "https://api.fireworks.ai/inference/v1", Model: "m"}
+	if d := New(cfg); d.BaseURL != cfg.AI.BaseURL {
+		t.Fatalf("rewrote %s (TLS needs the hostname)", d.BaseURL)
+	}
 }

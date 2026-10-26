@@ -21,7 +21,7 @@
   },
   "ai": {
     "provider": "${AI_PROVIDER}",
-    "apiKey": "${GEMINI_API_KEY}",
+    "apiKey": "${AI_API_KEY}",
     "model": "${AI_MODEL}",
     "baseUrl": "${OLLAMA_URL}"
   },
