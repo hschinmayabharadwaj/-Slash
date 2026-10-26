@@ -38,7 +38,9 @@ MAX_BODY = 128 * 1024
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'; "
-    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; "
+    # Optional Spline scene on the sign-in page, isolated on Spline's origin.
+    "frame-src https://my.spline.design",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",

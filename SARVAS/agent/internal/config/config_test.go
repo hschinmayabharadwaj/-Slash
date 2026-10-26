@@ -25,8 +25,10 @@ func TestEnvExpansionAndDefaults(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("AI_BASE_URL", "")
 	for _, body := range []string{
 		`{"ai":{"provider":"gemini"}}`,
+		`{"ai":{"provider":"openai","model":"m"}}`,
 		`{"ai":{"provider":"other"}}`,
 		`{"ai":{"provider":"sim"},"security":{"checksNetwork":"host"}}`,
 	} {
@@ -61,6 +63,9 @@ func TestListsFromEnvStrings(t *testing.T) {
 }
 
 func TestOllamaNeedsAModel(t *testing.T) {
+	t.Setenv("AI_PROVIDER", "") // make exports .env, which would fill these in
+	t.Setenv("AI_MODEL", "")
+	t.Setenv("AI_BASE_URL", "")
 	path := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(path, []byte(`{"ai":{"provider":"ollama"}}`), 0o600)
 	if _, err := Load(path); err == nil {

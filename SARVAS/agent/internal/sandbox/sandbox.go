@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"sarvas/internal/config"
@@ -42,7 +43,7 @@ type Docker struct {
 	AgentNetwork  string
 	ChecksNetwork string
 	Provider      string
-	OllamaURL     string // reachable from inside sandbox containers
+	BaseURL       string // model server, reachable from inside sandbox containers
 	// Exec is swappable for tests.
 	Exec func(ctx context.Context, name string, args []string, env []string) (Result, error)
 }
@@ -53,8 +54,12 @@ func New(cfg config.Config) *Docker {
 		agentNet = "none" // the offline provider needs no network at all
 	}
 	d := &Docker{Cfg: cfg.Docker, AgentNetwork: agentNet, ChecksNetwork: cfg.Security.ChecksNetwork, Provider: cfg.AI.Provider}
-	if cfg.AI.Provider == "ollama" {
-		d.OllamaURL = sandboxReachable(cfg.AI.BaseURL)
+	if cfg.AI.Provider == "ollama" || cfg.AI.Provider == "openai" {
+		d.BaseURL = cfg.AI.BaseURL
+		// Plain-HTTP servers are local ones; HTTPS hosts must keep their name for TLS.
+		if strings.HasPrefix(d.BaseURL, "http://") {
+			d.BaseURL = sandboxReachable(d.BaseURL)
+		}
 	}
 	return d
 }
@@ -124,15 +129,15 @@ func (d *Docker) RunAgent(mode, repoDir, ioDir string, timeout time.Duration, ap
 	args := d.baseArgs(name, d.AgentNetwork, repoDir, mode == "implement")
 	io, _ := filepath.Abs(ioDir)
 	args = append(args, "-v", io+":/io:rw", "-e", "AI_PROVIDER="+d.Provider)
-	if d.OllamaURL != "" {
-		args = append(args, "-e", "OLLAMA_URL="+d.OllamaURL, "--add-host", "host.docker.internal:host-gateway")
+	if d.BaseURL != "" {
+		args = append(args, "-e", "AI_BASE_URL="+d.BaseURL, "--add-host", "host.docker.internal:host-gateway")
 	}
 	var env []string
 	if apiKey != "" {
 		// "-e NAME" with no value copies it from docker's own environment,
 		// keeping the secret out of the process list.
-		args = append(args, "-e", "GEMINI_API_KEY")
-		env = append(env, "GEMINI_API_KEY="+apiKey)
+		args = append(args, "-e", "AI_API_KEY")
+		env = append(env, "AI_API_KEY="+apiKey)
 	}
 	args = append(args, d.Cfg.Image, "/usr/local/bin/agent-runner",
 		"--mode", mode, "--input", "/io/input.json", "--output", "/io/output.json")

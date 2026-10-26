@@ -109,11 +109,37 @@ func checkAI(c *checker, cfg config.Config) {
 			return
 		}
 		c.ok("Gemini key works with model %s", ai.Model)
-		if ai.SendCode {
-			c.warn("ai.sendCodeToProvider is on: repository excerpts and Build tasks are sent to Google")
-		} else {
-			c.warn("ai.sendCodeToProvider is off: Ask and Build are disabled for this remote provider (README drafting still works)")
+		warnSendCode(c, ai.SendCode, "Google")
+	case "openai":
+		req, _ := http.NewRequest("GET", strings.TrimRight(ai.BaseURL, "/")+"/models", nil)
+		if ai.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+ai.APIKey)
 		}
+		res, err := httpClient.Do(req)
+		if err != nil {
+			c.fail("can't reach the model API at %s", ai.BaseURL)
+			return
+		}
+		res.Body.Close()
+		switch res.StatusCode {
+		case 200:
+			c.ok("model API at %s accepts the key (model %s)", ai.BaseURL, ai.Model)
+		case 401, 403:
+			c.fail("the model API at %s rejected AI_API_KEY (HTTP %d)", ai.BaseURL, res.StatusCode)
+			return
+		default:
+			// Not every compatible server lists models; generation may still work.
+			c.warn("model API at %s answered HTTP %d when listing models", ai.BaseURL, res.StatusCode)
+		}
+		warnSendCode(c, ai.SendCode, ai.BaseURL)
+	}
+}
+
+func warnSendCode(c *checker, on bool, who string) {
+	if on {
+		c.warn("ai.sendCodeToProvider is on: repository excerpts and Build tasks are sent to %s", who)
+	} else {
+		c.warn("ai.sendCodeToProvider is off: Ask and Build are disabled for this remote provider (README drafting still works)")
 	}
 }
 
