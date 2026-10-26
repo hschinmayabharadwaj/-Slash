@@ -1,9 +1,14 @@
+import { ArrowLeft, FileText, FolderGit2, GitBranch, Lock, MessageSquareCode, RefreshCw, Wand2 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Markdown from '../components/Markdown.jsx';
+import { PageLoading } from '../components/Skeleton.jsx';
+import ShimmerText from '../components/kokonutui/shimmer-text';
+import SmoothTab from '../components/kokonutui/smooth-tab';
+import { PlaceholdersAndVanishInput } from '../components/ui/placeholders-and-vanish-input';
+import { cn } from '../lib/utils';
 import { Link, navigate } from '../router.jsx';
-
-const TABS = [['ask', 'Ask'], ['build', 'Request a change'], ['readme', 'README']];
 
 export default function Repo({ owner, name, onError }) {
   const [data, setData] = useState(null);
@@ -11,29 +16,38 @@ export default function Repo({ owner, name, onError }) {
 
   useEffect(() => { api.repo(owner, name).then(setData).catch(onError); }, [owner, name, onError]);
 
-  if (!data) return <p className="muted">Loading…</p>;
+  if (!data) return <PageLoading />;
   const { repo } = data;
 
   return (
-    <>
-      <section className="card">
-        <h1>{repo.fullName}</h1>
-        <p className="muted">
-          Default branch <code>{repo.defaultBranch}</code> · you have <strong>{repo.access}</strong> access
-          {repo.private && ' · private'}
-        </p>
-        <nav className="tabs" role="tablist">
-          {TABS.map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={tab === id}
-              className={tab === id ? 'tab active' : 'tab'} onClick={() => setTab(id)}>{label}</button>
-          ))}
-        </nav>
-      </section>
-      {tab === 'ask' && <Ask owner={owner} name={name} onError={onError} />}
-      {tab === 'build' && <Build owner={owner} name={name} onError={onError} />}
-      {tab === 'readme' && <Readme owner={owner} name={name} data={data} onError={onError} />}
-      <p><Link to="/">← Dashboard</Link></p>
-    </>
+    <div className="space-y-6">
+      <Link to="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground no-underline hover:text-foreground hover:no-underline">
+        <ArrowLeft className="size-4" aria-hidden="true" /> Dashboard
+      </Link>
+      <header className="flex flex-wrap items-start gap-4">
+        <span className="grid size-11 place-items-center rounded-lg border bg-card">
+          <FolderGit2 className="size-5 text-primary" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate"><span className="text-muted-foreground">{repo.owner}/</span>{repo.name}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span className="tag"><GitBranch className="size-3" aria-hidden="true" /><code>{repo.defaultBranch}</code></span>
+            <span className="tag">{repo.access} access</span>
+            {repo.private && <span className="tag"><Lock className="size-3" aria-hidden="true" />private</span>}
+          </p>
+        </div>
+      </header>
+      <SmoothTab
+        label="Repository tools"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { id: 'ask', title: 'Ask', icon: MessageSquareCode, content: <Ask owner={owner} name={name} onError={onError} /> },
+          { id: 'build', title: 'Request a change', icon: Wand2, content: <Build owner={owner} name={name} onError={onError} /> },
+          { id: 'readme', title: 'README', icon: FileText, content: <Readme owner={owner} name={name} data={data} onError={onError} /> },
+        ]}
+      />
+    </div>
   );
 }
 
@@ -50,19 +64,23 @@ function IndexBar({ owner, name, onError }) {
 
   const reindex = () => api.reindex(owner, name).then(setSt).catch(onError);
   if (!st) return null;
+  const dot = { ready: st.stale ? 'bg-warn' : 'bg-ok', indexing: 'bg-primary motion-safe:animate-pulse', missing: 'bg-muted-foreground' }[st.state];
   return (
-    <div className="indexbar muted small">
-      {st.state === 'missing' && <>Not indexed yet. </>}
-      {st.state === 'indexing' && <>Reading the repository… </>}
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <span className={cn('size-2 rounded-full', dot)} aria-hidden="true" />
+      {st.state === 'missing' && <span>Not indexed yet.</span>}
+      {st.state === 'indexing' && <ShimmerText text="Reading the repository…" className="text-xs font-medium" />}
       {st.state === 'ready' && (
-        <>
+        <span>
           Indexed {st.files} files at <code>{st.commit.slice(0, 7)}</code>
-          {st.stale ? ' (new commits since — refreshed automatically when you ask)' : ' (up to date)'}.{' '}
-        </>
+          {st.stale ? ' · new commits since, refreshed automatically when you ask' : ' · up to date'}
+        </span>
       )}
-      {st.error && <span className="error">{st.error} </span>}
+      {st.error && <span className="text-bad">{st.error}</span>}
       {st.state !== 'indexing' && (
-        <button type="button" className="link" onClick={reindex}>{st.state === 'missing' ? 'Index now' : 'Refresh'}</button>
+        <button type="button" onClick={reindex} className="inline-flex items-center gap-1 text-primary hover:underline">
+          <RefreshCw className="size-3" aria-hidden="true" />{st.state === 'missing' ? 'Index now' : 'Refresh'}
+        </button>
       )}
     </div>
   );
@@ -74,70 +92,78 @@ const STATUS_NOTE = {
   low_confidence: 'Not confident enough to answer',
   indexing: 'Indexing',
 };
+const PLACEHOLDERS = [
+  'Where is the checkout total calculated?',
+  'How does sign-in work?',
+  'Which files handle payments?',
+  'What happens when a user signs up?',
+  'Where are environment variables read?',
+];
+
+function Sources({ title, items }) {
+  return (
+    <>
+      <h3>{title}</h3>
+      <ul className="space-y-1 text-sm">
+        {items.map((c) => (
+          <li key={`${c.path}:${c.startLine}`}>
+            <a href={c.url} target="_blank" rel="noreferrer noopener"><code>{c.path}</code> lines {c.startLine}–{c.endLine}</a>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 function Ask({ owner, name, onError }) {
-  const [question, setQuestion] = useState('');
   const [answers, setAnswers] = useState([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!question.trim()) return;
-    setBusy(true);
+  const ask = async (question) => {
+    setBusy(question);
     try {
       const res = await api.ask(owner, name, question);
-      setAnswers((a) => [{ question, ...res }, ...a]);
-      if (res.status !== 'indexing') setQuestion('');
-    } catch (err) { onError(err); } finally { setBusy(false); }
+      setAnswers((a) => [{ id: Date.now(), question, ...res }, ...a]);
+    } catch (err) { onError(err); } finally { setBusy(''); }
   };
 
   return (
-    <section className="card">
-      <h2>Ask about this repository</h2>
+    <div className="space-y-4">
+      <div>
+        <h2>Ask about this repository</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Answers cite the files and lines they come from.</p>
+      </div>
       <IndexBar owner={owner} name={name} onError={onError} />
-      <form onSubmit={submit} className="row">
-        <input className="grow" value={question} maxLength={2000} onChange={(e) => setQuestion(e.target.value)}
-          placeholder="e.g. Where is the checkout total calculated?" aria-label="Question" />
-        <button type="submit" className="btn primary" disabled={busy || !question.trim()}>
-          {busy ? 'Thinking…' : 'Ask'}
-        </button>
-      </form>
-      {answers.map((a, i) => (
-        // eslint-disable-next-line react/no-array-index-key
-        <article key={i} className={`answer ${a.status}`}>
-          <p className="q">{a.question}</p>
-          {STATUS_NOTE[a.status] && <p className="note">{STATUS_NOTE[a.status]}</p>}
-          <Markdown text={a.answer} />
-          {a.citations?.length > 0 && (
-            <>
-              <h3>Sources</h3>
-              <ul className="cites">
-                {a.citations.map((c) => (
-                  <li key={`${c.path}:${c.startLine}`}>
-                    <a href={c.url} target="_blank" rel="noreferrer noopener"><code>{c.path}</code> lines {c.startLine}–{c.endLine}</a>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {a.status !== 'answered' && a.sources?.length > 0 && (
-            <>
-              <h3>Closest matches</h3>
-              <ul className="cites">
-                {a.sources.slice(0, 5).map((c) => (
-                  <li key={`${c.path}:${c.startLine}`}>
-                    <a href={c.url} target="_blank" rel="noreferrer noopener"><code>{c.path}</code> lines {c.startLine}–{c.endLine}</a>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {a.disclosure && <p className="muted small">{a.disclosure}{a.commit && ` · commit ${a.commit.slice(0, 7)}`}</p>}
-        </article>
-      ))}
-    </section>
+      <PlaceholdersAndVanishInput placeholders={PLACEHOLDERS} ariaLabel="Question" maxLength={2000}
+        disabled={Boolean(busy)} onSubmit={(_, q) => ask(q)} />
+      {busy && (
+        <div className="rounded-md border border-dashed p-4">
+          <p className="text-sm font-medium">{busy}</p>
+          <ShimmerText text="Reading the code…" className="mt-1 text-sm font-medium" />
+        </div>
+      )}
+      <AnimatePresence initial={false}>
+        {answers.map((a) => (
+          <motion.article key={a.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            className="rounded-md border bg-background p-4">
+            <p className="font-medium">{a.question}</p>
+            {STATUS_NOTE[a.status] && (
+              <p className={cn('tag mt-2', a.status === 'outside_context' ? 'border-bad/30 text-bad' : '')}>{STATUS_NOTE[a.status]}</p>
+            )}
+            <div className="mt-2"><Markdown text={a.answer} /></div>
+            {a.citations?.length > 0 && <Sources title="Sources" items={a.citations} />}
+            {a.status !== 'answered' && a.sources?.length > 0 && <Sources title="Closest matches" items={a.sources.slice(0, 5)} />}
+            {a.disclosure && (
+              <p className="mt-3 text-xs text-muted-foreground">{a.disclosure}{a.commit && ` · commit ${a.commit.slice(0, 7)}`}</p>
+            )}
+          </motion.article>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }
+
+const HOW = ['You describe it', 'Agent plans, you approve', 'Built and checked in a sandbox', 'You approve the diff', 'Engineer merges the PR'];
 
 function Build({ owner, name, onError }) {
   const [request, setRequest] = useState('');
@@ -154,28 +180,41 @@ function Build({ owner, name, onError }) {
   };
 
   return (
-    <section className="card">
-      <h2>Request a change</h2>
-      <p className="muted">
-        Describe what you want in plain English: a feature, a bug, a UI change, and how it should behave. The agent
-        reads the code, asks questions if anything is unclear, and shows you a plan. After you approve it, the
-        agent makes the change in an isolated sandbox, runs the repository's checks and shows you the diff. Approving the
-        diff opens a pull request. <strong>An engineer must review and merge it</strong>.
-      </p>
-      <form onSubmit={submit}>
-        <label htmlFor="req">What should change?</label>
-        <textarea id="req" className="short" value={request} maxLength={2000} onChange={(e) => setRequest(e.target.value)}
-          placeholder="On the pricing page, the yearly plan should show the monthly equivalent price under it." />
-        <label htmlFor="crit">How will we know it's done? <span className="muted">(optional, one per line)</span></label>
-        <textarea id="crit" className="short" value={criteria} maxLength={3000} onChange={(e) => setCriteria(e.target.value)}
-          placeholder={'Yearly plan shows "$8/month billed yearly"\nMonthly plan is unchanged'} />
-        <div className="row">
-          <button type="submit" className="btn primary" disabled={busy || request.trim().length < 10}>
-            {busy ? 'Starting…' : 'Start'}
-          </button>
+    <div className="space-y-4">
+      <div>
+        <h2>Request a change</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Describe a feature, a bug or a UI change and how it should behave. The agent asks if anything is unclear.{' '}
+          <strong className="text-foreground">An engineer must review and merge the pull request.</strong>
+        </p>
+      </div>
+      <ol className="flex flex-wrap gap-2 text-xs">
+        {HOW.map((s, i) => (
+          <li key={s} className="tag"><span className="font-semibold text-primary">{i + 1}</span>{s}</li>
+        ))}
+      </ol>
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label htmlFor="req" className="mb-1.5 block text-sm font-medium">What should change?</label>
+          <textarea id="req" className="field min-h-28" value={request} maxLength={2000} onChange={(e) => setRequest(e.target.value)}
+            placeholder="On the pricing page, the yearly plan should show the monthly equivalent price under it." />
+          <p className="mt-1 text-right text-xs text-muted-foreground tabular-nums">{request.length}/2000</p>
         </div>
+        <div>
+          <label htmlFor="crit" className="mb-1.5 block text-sm font-medium">
+            How will we know it's done? <span className="font-normal text-muted-foreground">(optional, one per line)</span>
+          </label>
+          <textarea id="crit" className="field min-h-24" value={criteria} maxLength={3000} onChange={(e) => setCriteria(e.target.value)}
+            placeholder={'Yearly plan shows "$8/month billed yearly"\nMonthly plan is unchanged'} />
+        </div>
+        <button type="submit" className="btn btn-primary" disabled={busy || request.trim().length < 10}>
+          <Wand2 className="size-4" aria-hidden="true" />{busy ? 'Starting…' : 'Start'}
+        </button>
+        {request.trim().length > 0 && request.trim().length < 10 && (
+          <span className="ml-3 text-xs text-muted-foreground">A few more words, please.</span>
+        )}
       </form>
-    </section>
+    </div>
   );
 }
 
@@ -196,37 +235,38 @@ function Readme({ owner, name, data, onError }) {
 
   if (repo.access === 'read') {
     return (
-      <section className="card">
+      <div>
         <h2>README</h2>
-        <p className="muted">Adding or deleting the README directly needs write access. Use “Request a change” instead.</p>
-      </section>
+        <p className="mt-1 text-sm text-muted-foreground">Adding or deleting the README directly needs write access. Use “Request a change” instead.</p>
+      </div>
     );
   }
   return readme.exists ? (
-    <section className="card">
+    <div className="space-y-4">
       <h2>README.md exists</h2>
-      <pre className="code">{readme.text.split('\n').slice(0, 40).join('\n')}</pre>
-      <div className="row">
-        <button type="button" className="btn danger" disabled={Boolean(busy)} onClick={propose('delete_readme')}>
-          Preview deleting README.md
-        </button>
-      </div>
-    </section>
+      <pre className="code max-h-96">{readme.text.split('\n').slice(0, 40).join('\n')}</pre>
+      <button type="button" className="btn btn-danger" disabled={Boolean(busy)} onClick={propose('delete_readme')}>
+        Preview deleting README.md
+      </button>
+    </div>
   ) : (
-    <section className="card">
-      <h2>Add a README.md</h2>
-      <p className="muted">Write it yourself, or let the AI draft one from the repository's files and edit it.</p>
-      <textarea value={content} maxLength={50000} placeholder={`# ${repo.name}`}
-        onChange={(e) => setContent(e.target.value)} aria-label="README content" />
-      <div className="row">
-        <button type="button" className="btn primary" disabled={Boolean(busy) || !content.trim()}
-          onClick={propose('create_readme')}>
+    <div className="space-y-4">
+      <div>
+        <h2>Add a README.md</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Write it yourself, or let the AI draft one from the repository's files and edit it.</p>
+      </div>
+      {busy === 'draft'
+        ? <div className="field grid min-h-72 place-items-center"><ShimmerText text="Drafting from the repository…" className="text-sm font-medium" /></div>
+        : <textarea className="field min-h-72 font-mono text-[13px]" value={content} maxLength={50000} placeholder={`# ${repo.name}`}
+            onChange={(e) => setContent(e.target.value)} aria-label="README content" />}
+      <div className="flex flex-wrap gap-3">
+        <button type="button" className="btn btn-primary" disabled={Boolean(busy) || !content.trim()} onClick={propose('create_readme')}>
           {busy === 'propose' ? 'Preparing…' : 'Preview change'}
         </button>
         <button type="button" className="btn" disabled={Boolean(busy)} onClick={draft}>
-          {busy === 'draft' ? 'Drafting…' : 'Draft with AI'}
+          <Wand2 className="size-4" aria-hidden="true" />Draft with AI
         </button>
       </div>
-    </section>
+    </div>
   );
 }
