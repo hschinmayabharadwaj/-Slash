@@ -200,8 +200,8 @@ export default function SmoothTab({
   value,
   onChange,
   className,
-  activeColor = "bg-primary",
-  activeTextColor = "text-primary-foreground",
+  activeColor = "bg-background",
+  activeTextColor = "text-foreground",
   label = "Sections"
 }) {
   const count = items.length;
@@ -470,7 +470,7 @@ export default function SmoothTab({
       <div className="flex justify-center">
         <div
           aria-label={label}
-          className="relative inline-flex max-w-full rounded-full border bg-muted p-1"
+          className="relative inline-flex max-w-full rounded-lg bg-muted p-1"
           ref={tablistRef}
           role="tablist"
         >
@@ -482,7 +482,7 @@ export default function SmoothTab({
                 aria-controls={panelId(i)}
                 aria-selected={isSelected}
                 className={cn(
-                  "relative flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 font-medium text-sm",
+                  "relative flex shrink-0 items-center gap-1.5 rounded-md px-3.5 py-1.5 font-medium text-sm",
                   "text-muted-foreground transition-colors duration-150 ease-out hover:text-foreground",
                   "outline-none focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
                 )}
@@ -559,7 +559,7 @@ export default function SmoothTab({
           {items.map((item, i) => (
             <div
               aria-labelledby={tabId(i)}
-              className="min-h-[220px] p-5 sm:p-6 outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+              className="min-h-[220px] p-6 sm:p-8 outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
               id={panelId(i)}
               inert={i !== selected}
               key={item.id}

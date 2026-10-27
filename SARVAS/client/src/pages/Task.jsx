@@ -1,4 +1,3 @@
-import { animate } from 'animejs';
 import { ArrowLeft, Check, CircleCheck, CircleX, ExternalLink, GitPullRequest } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
@@ -8,6 +7,7 @@ import { PageLoading } from '../components/Skeleton.jsx';
 import StatusPill from '../components/StatusPill.jsx';
 import ShimmerText from '../components/kokonutui/shimmer-text';
 import { firstLine } from '../lib/status';
+import { gsap } from '../lib/motion';
 import { cn, reducedMotion } from '../lib/utils';
 import { Link, navigate } from '../router.jsx';
 
@@ -25,15 +25,15 @@ const ENDED = {
   lost: 'Lost (the agent restarted)',
 };
 const WORKING = new Set(['pending', 'planning', 'plan_approved', 'implementing', 'verifying', 'impl_approved', 'creating_pr']);
-const RISK = { low: 'border-ok/30 text-ok', medium: 'border-warn/30 text-warn', high: 'border-bad/30 text-bad' };
+const RISK = { low: 'bg-ok/12 text-ok', medium: 'bg-warn/12 text-warn', high: 'bg-bad/10 text-bad' };
 
-// Progress through the pipeline; the connecting bar eases forward with anime.js.
+// Progress through the pipeline; the connecting bar eases forward (GSAP).
 function Stepper({ index, done }) {
   const bar = useRef(null);
   const pct = done ? 100 : (index / (STEPS.length - 1)) * 100;
   useEffect(() => {
-    const anim = animate(bar.current, { width: `${pct}%`, duration: reducedMotion() ? 0 : 900, ease: 'outExpo' });
-    return () => anim.pause();
+    const tween = gsap.to(bar.current, { width: `${pct}%`, duration: reducedMotion() ? 0 : 0.9, ease: 'expo.out' });
+    return () => tween.kill();
   }, [pct]);
 
   return (
@@ -179,8 +179,8 @@ export default function Task({ id, onError }) {
           {t.diffTruncated && <p className="mt-2 text-xs text-muted-foreground">Diff truncated for display; the pull request has all of it.</p>}
           <h3 className="flex items-center gap-2">
             Checks {t.checksOk
-              ? <span className="tag border-ok/30 text-ok"><CircleCheck className="size-3" aria-hidden="true" />passed</span>
-              : <span className="tag border-bad/30 text-bad"><CircleX className="size-3" aria-hidden="true" />failed</span>}
+              ? <span className="tag bg-ok/12 text-ok"><CircleCheck className="size-3" aria-hidden="true" />passed</span>
+              : <span className="tag bg-bad/10 text-bad"><CircleX className="size-3" aria-hidden="true" />failed</span>}
           </h3>
           <pre className="code max-h-80">{t.checks}</pre>
           {t.status === 'awaiting_impl_approval' && (

@@ -1,11 +1,12 @@
-import { createTimeline, stagger } from 'animejs';
 import { ArrowRight, Check, GitPullRequest, KeyRound, MessageSquareCode, ShieldCheck, Wand2 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import Logo, { GitHubMark } from '../components/Logo.jsx';
 import Stagger from '../components/Stagger.jsx';
-import { HoverBorderGradient } from '../components/ui/hover-border-gradient';
+import { SplitText } from 'gsap/SplitText';
+import { gsap } from '../lib/motion';
 import { reducedMotion } from '../lib/utils';
-import { Spotlight } from '../components/ui/spotlight-new';
+
+gsap.registerPlugin(SplitText);
 
 const MESSAGES = {
   state: "The sign-in link expired or didn't come from this page. Please try again.",
@@ -17,72 +18,111 @@ const MESSAGES = {
 const SPLINE = import.meta.env.VITE_SPLINE_URL?.startsWith('https://my.spline.design/') ? import.meta.env.VITE_SPLINE_URL : null;
 
 const FEATURES = [
-  [MessageSquareCode, 'Ask the codebase', 'Plain-English answers with links to the exact lines they came from.'],
+  [MessageSquareCode, 'Ask the codebase', 'Plain-English answers that link to the exact lines they came from.'],
   [Wand2, 'Request a change', 'Describe what you want. The agent plans it and asks when something is unclear.'],
-  [ShieldCheck, 'Sandboxed and checked', "Changes are made in an isolated container and run against your repository's checks."],
+  [ShieldCheck, 'Sandboxed and checked', "Every change is made in an isolated container and run against your repository's checks."],
   [GitPullRequest, 'Always a pull request', 'Nothing touches your default branch. An engineer reviews and merges.'],
 ];
 
-export default function Connect({ authError }) {
+// Full-page navigation: the OAuth redirect must not be a fetch.
+function ConnectButton({ className = 'btn-primary' }) {
   return (
-    <div className="relative min-h-dvh overflow-hidden">
-      <Spotlight
-        gradientFirst="radial-gradient(68.54% 68.72% at 55.02% 31.46%, hsla(250, 100%, 80%, .10) 0, hsla(250, 100%, 60%, .03) 50%, hsla(250, 100%, 50%, 0) 80%)"
-        gradientSecond="radial-gradient(50% 50% at 50% 50%, hsla(250, 100%, 80%, .07) 0, hsla(250, 100%, 60%, .02) 80%, transparent 100%)"
-        gradientThird="radial-gradient(50% 50% at 50% 50%, hsla(200, 100%, 80%, .05) 0, hsla(200, 100%, 50%, .02) 80%, transparent 100%)"
-      />
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[size:56px_56px] opacity-40 [mask-image:radial-gradient(ellipse_at_top,black_20%,transparent_70%)]" />
+    <a href="/auth/login" className={`btn ${className} h-11 px-6`}>
+      <GitHubMark /> Connect GitHub <ArrowRight className="size-4" aria-hidden="true" />
+    </a>
+  );
+}
 
-      <header className="relative z-10 mx-auto flex max-w-6xl items-center gap-2 px-6 py-5 font-semibold">
+export default function Connect({ authError }) {
+  const hero = useRef(null);
+
+  // Headline rises in line by line; the rest follows.
+  useLayoutEffect(() => {
+    if (reducedMotion()) return undefined;
+    const ctx = gsap.context(() => {
+      const split = SplitText.create('[data-split]', { type: 'lines', mask: 'lines', aria: 'auto' });
+      gsap.timeline({ defaults: { ease: 'power4.out' } })
+        .from(split.lines, { yPercent: 110, duration: 1.1, stagger: 0.09 })
+        .from('[data-fade]', { autoAlpha: 0, y: 18, duration: 0.8, stagger: 0.08 }, '-=0.7');
+    }, hero);
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <div className="min-h-dvh bg-background">
+      <header className="mx-auto flex h-16 max-w-[1200px] items-center gap-2 px-6 font-medium text-foreground">
         <Logo /> SARVAS
+        <span className="flex-1" />
+        <a href="/auth/login" className="btn btn-ghost hidden sm:inline-flex">Sign in</a>
       </header>
 
-      <Stagger className="relative z-10 mx-auto grid max-w-6xl items-center gap-12 px-6 pt-8 pb-16 lg:grid-cols-2 lg:pt-16">
-        <div className="space-y-6">
-          <span className="tag bg-card"><span className="size-1.5 rounded-full bg-ok" /> Self-hosted · Sandboxed · PR-only</span>
-          <h1 className="text-4xl leading-[1.05] sm:text-5xl lg:text-6xl">
-            An AI engineer for your repositories,{' '}
-            <span className="bg-gradient-to-r from-[#8b7dff] to-[#38bdf8] bg-clip-text text-transparent">with you in charge.</span>
+      <section ref={hero} className="mx-auto grid max-w-[1200px] items-center gap-12 px-6 py-16 lg:grid-cols-2 lg:py-24">
+        <div>
+          <p data-fade className="eyebrow">Self-hosted · Sandboxed · Pull-request only</p>
+          <h1 data-split className="display mt-5 text-[2.5rem] leading-[1.05] tracking-[-0.03em] sm:text-6xl lg:text-[4.25rem]">
+            An AI engineer for your repositories, with you in charge.
           </h1>
-          <p className="max-w-xl text-lg text-muted-foreground">
+          <p data-fade className="mt-6 max-w-xl text-lg text-body">
             Ask questions about a repository, or describe a change in plain English. SARVAS plans it, builds it in an
-            isolated sandbox, runs the checks and opens a pull request that an engineer must review and merge.
+            isolated sandbox, runs the checks and opens a pull request that an engineer reviews and merges.
           </p>
           {authError && (
-            <p role="alert" className="rounded-md border border-bad/30 bg-bad/10 px-3 py-2 text-sm text-bad">
+            <p data-fade role="alert" className="mt-6 rounded-md border border-bad/30 bg-bad/10 px-3.5 py-2.5 text-sm text-bad">
               {MESSAGES[authError] ?? 'Sign-in failed.'}
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Full-page navigation: the OAuth redirect must not be a fetch. */}
-            <HoverBorderGradient as="a" href="/auth/login" containerClassName="no-underline hover:no-underline"
-              className="flex items-center gap-2 px-5 py-2.5 font-medium">
-              <GitHubMark /> Connect GitHub <ArrowRight className="size-4" aria-hidden="true" />
-            </HoverBorderGradient>
+          <div data-fade className="mt-8 flex flex-wrap items-center gap-5">
+            <ConnectButton />
             <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <KeyRound className="size-4" aria-hidden="true" /> Never asks for your password
             </span>
           </div>
         </div>
-        {SPLINE ? (
-          <iframe src={SPLINE} title="Decorative 3D scene" loading="lazy" referrerPolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin" tabIndex={-1} aria-hidden="true"
-            className="aspect-square w-full rounded-2xl border-0" />
-        ) : <PipelinePreview />}
+        <div data-fade>
+          {SPLINE ? (
+            <iframe src={SPLINE} title="Decorative 3D scene" loading="lazy" referrerPolicy="no-referrer"
+              sandbox="allow-scripts allow-same-origin" tabIndex={-1} aria-hidden="true"
+              className="aspect-square w-full rounded-xl border-0" />
+          ) : <PipelineWindow />}
+        </div>
+      </section>
+
+      <section className="bg-muted py-24">
+        <div className="mx-auto max-w-[1200px] px-6">
+          <p className="eyebrow">How it works</p>
+          <h2 className="display mt-3 max-w-2xl text-4xl leading-[1.1] tracking-[-0.02em] sm:text-5xl">
+            Every change is planned, checked and reviewed.
+          </h2>
+          <Stagger onScroll className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {FEATURES.map(([Icon, title, text]) => (
+              <div key={title} className="rounded-lg bg-background p-8">
+                <Icon className="size-5 text-primary" aria-hidden="true" />
+                <p className="mt-5 text-lg font-medium text-foreground">{title}</p>
+                <p className="mt-2 text-body">{text}</p>
+              </div>
+            ))}
+          </Stagger>
+        </div>
+      </section>
+
+      <Stagger onScroll className="mx-auto max-w-[1200px] px-6 py-24">
+        <div className="rounded-lg bg-primary px-8 py-14 text-primary-foreground sm:px-16 sm:py-16">
+          <h2 className="display max-w-2xl text-3xl leading-[1.15] tracking-[-0.01em] text-primary-foreground sm:text-4xl">
+            Acts with your GitHub permissions, only where the app is installed.
+          </h2>
+          <p className="mt-4 max-w-xl text-primary-foreground/90">
+            You approve the plan and the diff. An engineer merges the pull request. The agent can't approve or merge its own work.
+          </p>
+          <div className="mt-8"><ConnectButton className="border-transparent bg-background text-foreground active:bg-muted" /></div>
+        </div>
       </Stagger>
 
-      <Stagger className="relative z-10 mx-auto grid max-w-6xl gap-4 px-6 pb-20 sm:grid-cols-2 lg:grid-cols-4">
-        {FEATURES.map(([Icon, title, text]) => (
-          <div key={title} className="card bg-card/70 backdrop-blur">
-            <Icon className="mb-3 size-5 text-primary" aria-hidden="true" />
-            <h2 className="text-base">{title}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{text}</p>
-          </div>
-        ))}
-      </Stagger>
-
-      <footer className="relative z-10 border-t py-6 text-center text-xs text-muted-foreground">
-        The agent acts with <strong>your</strong> GitHub permissions, only on repositories where this app is installed.
+      <footer className="bg-dark py-16 text-on-dark-soft">
+        <div className="mx-auto flex max-w-[1200px] flex-wrap items-center gap-3 px-6 text-sm">
+          <span className="flex items-center gap-2 font-medium text-on-dark"><Logo /> SARVAS</span>
+          <span className="flex-1" />
+          <span>Self-hosted AI coding agent. Your code stays on your infrastructure unless you allow otherwise.</span>
+        </div>
       </footer>
     </div>
   );
@@ -90,38 +130,44 @@ export default function Connect({ authError }) {
 
 const STEPS = ['Plan the change', 'Approve the scope', 'Build in a sandbox', 'Run the checks', 'Open a pull request'];
 
-// A looping illustration of one task moving through the pipeline (anime.js timeline).
-function PipelinePreview() {
+// A dark product window showing one task moving through the pipeline, on a GSAP loop.
+function PipelineWindow() {
   const ref = useRef(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (reducedMotion()) return undefined;
-    const q = (s) => ref.current.querySelectorAll(s);
-    const tl = createTimeline({ loop: true, loopDelay: 1800, defaults: { ease: 'outCubic' } })
-      .add(q('[data-check]'), { scale: [0, 1], opacity: [0, 1], duration: 400, delay: stagger(650) })
-      .add(q('[data-bar]'), { width: ['0%', '100%'], duration: 650 * STEPS.length, ease: 'linear' }, 0)
-      .add(q('[data-pr]'), { opacity: [0, 1], y: [10, 0], duration: 500 });
-    return () => tl.revert();
+    const ctx = gsap.context(() => {
+      gsap.timeline({ repeat: -1, repeatDelay: 1.8, defaults: { ease: 'power3.out' } })
+        .fromTo('[data-bar]', { scaleX: 0 }, { scaleX: 1, duration: 0.65 * STEPS.length, ease: 'none' }, 0)
+        .fromTo('[data-check]', { scale: 0, autoAlpha: 0 }, { scale: 1, autoAlpha: 1, duration: 0.4, stagger: 0.65 }, 0)
+        .fromTo('[data-pr]', { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.5 });
+    }, ref);
+    return () => ctx.revert();
   }, []);
 
   return (
-    <div ref={ref} aria-hidden="true" className="card relative mx-auto w-full max-w-md bg-card/80 shadow-2xl shadow-primary/10 backdrop-blur">
-      <p className="eyebrow">acme/storefront</p>
-      <p className="mt-1 font-medium">Show the monthly price under the yearly plan</p>
-      <div className="mt-4 h-1 overflow-hidden rounded-full bg-muted">
-        <div data-bar className="h-full w-full rounded-full bg-gradient-to-r from-[#8b7dff] to-[#38bdf8]" />
+    <div ref={ref} aria-hidden="true" className="card-dark mx-auto w-full max-w-lg rounded-xl p-0 sm:p-0">
+      <div className="flex items-center gap-1.5 border-b border-white/10 px-5 py-3">
+        <span className="size-2.5 rounded-full bg-white/15" /><span className="size-2.5 rounded-full bg-white/15" /><span className="size-2.5 rounded-full bg-white/15" />
+        <span className="ml-3 font-mono text-xs text-on-dark-soft">acme/storefront · task #42</span>
       </div>
-      <ol className="mt-5 space-y-3">
-        {STEPS.map((s) => (
-          <li key={s} className="flex items-center gap-3 text-sm">
-            <span className="grid size-5 place-items-center rounded-full border bg-background">
-              <Check data-check className="size-3 text-ok" />
-            </span>
-            {s}
-          </li>
-        ))}
-      </ol>
-      <div data-pr className="mt-5 flex items-center gap-2 rounded-md border border-ok/30 bg-ok/10 px-3 py-2 text-sm text-ok">
-        <GitPullRequest className="size-4" /> Pull request #42 is ready for review
+      <div className="p-6 sm:p-8">
+        <p className="font-serif text-2xl leading-tight tracking-[-0.01em] text-on-dark">Show the monthly price under the yearly plan</p>
+        <div className="mt-5 h-1 overflow-hidden rounded-full bg-dark-elevated">
+          <div data-bar className="h-full origin-left rounded-full bg-primary" />
+        </div>
+        <ol className="mt-6 space-y-3 font-mono text-[13px]">
+          {STEPS.map((s) => (
+            <li key={s} className="flex items-center gap-3 text-on-dark">
+              <span className="grid size-5 place-items-center rounded-full bg-dark-elevated">
+                <Check data-check className="size-3 text-[#5db8a6]" />
+              </span>
+              {s}
+            </li>
+          ))}
+        </ol>
+        <div data-pr className="mt-6 flex items-center gap-2 rounded-md bg-dark-elevated px-4 py-3 text-sm text-on-dark">
+          <GitPullRequest className="size-4 text-primary" /> Pull request #42 is ready for review
+        </div>
       </div>
     </div>
   );

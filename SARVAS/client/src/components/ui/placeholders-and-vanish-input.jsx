@@ -176,7 +176,7 @@ export function PlaceholdersAndVanishInput({
   return (
     <form
       className={cn(
-        "w-full relative mx-auto bg-background h-12 rounded-full overflow-hidden border shadow-sm transition duration-200 focus-within:ring-2 focus-within:ring-ring/40",
+        "w-full relative mx-auto bg-background h-12 rounded-md overflow-hidden border transition duration-200 focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/15",
         disabled && "opacity-70"
       )}
       onSubmit={handleSubmit}
@@ -201,7 +201,7 @@ export function PlaceholdersAndVanishInput({
         value={value}
         type="text"
         className={cn(
-          "w-full relative text-sm sm:text-base z-50 border-none text-foreground bg-transparent h-full rounded-full focus:outline-none focus:ring-0 pl-4 sm:pl-10 pr-20",
+          "w-full relative text-sm sm:text-base z-50 border-none text-foreground bg-transparent h-full rounded-md focus:outline-none focus:ring-0 pl-4 sm:pl-10 pr-20",
           animating && "text-transparent dark:text-transparent"
         )}
       />
@@ -210,7 +210,7 @@ export function PlaceholdersAndVanishInput({
         disabled={!value.trim() || disabled}
         type="submit"
         aria-label="Submit"
-        className="absolute right-2 top-1/2 z-50 -translate-y-1/2 h-8 w-8 rounded-full bg-primary text-primary-foreground disabled:bg-muted disabled:text-muted-foreground transition duration-200 flex items-center justify-center"
+        className="absolute right-2 top-1/2 z-50 -translate-y-1/2 h-8 w-8 rounded-md bg-primary text-primary-foreground disabled:bg-muted disabled:text-muted-foreground transition duration-200 flex items-center justify-center"
       >
         <motion.svg
           xmlns="http://www.w3.org/2000/svg"

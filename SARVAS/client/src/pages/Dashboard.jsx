@@ -17,7 +17,7 @@ const ROLE_HELP = {
   engineer: 'You can also approve medium-risk plans on repositories where you have push access.',
   admin: 'You can also see the full audit log and pause the agent.',
 };
-const ROLE_CLASS = { admin: 'border-bad/30 text-bad', engineer: 'border-primary/30 text-primary', requester: '' };
+const ROLE_CLASS = { admin: 'bg-bad/10 text-bad', engineer: 'bg-primary/12 text-link', requester: '' };
 
 const SLICES = [
   ['working', 'In progress', 'var(--chart-1)'],
@@ -65,7 +65,7 @@ export default function Dashboard({ onError }) {
             @{me.login}
             <span className={`tag ${ROLE_CLASS[me.role] || ''}`}>{me.role}</span>
             {me.build?.enabled
-              ? <span className="tag border-ok/30 text-ok">Build tasks on</span>
+              ? <span className="tag bg-ok/12 text-ok">Build tasks on</span>
               : <span className="tag">Build tasks off</span>}
           </p>
         </div>
@@ -82,13 +82,13 @@ export default function Dashboard({ onError }) {
           const body = (
             <>
               <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-              <CountUp value={value} className="mt-3 block text-3xl font-semibold tabular-nums text-foreground" />
+              <CountUp value={value} className="mt-4 block font-serif text-5xl font-medium leading-none tabular-nums text-foreground" />
               <span className="text-sm text-muted-foreground">{label}</span>
             </>
           );
           return to
-            ? <Link key={label} to={to} className="card block p-4 no-underline transition-colors hover:border-primary/40 hover:no-underline sm:p-5">{body}</Link>
-            : <div key={label} className="card p-4 sm:p-5">{body}</div>;
+            ? <Link key={label} to={to} className="card-cream block p-5 no-underline hover:no-underline active:bg-muted-strong sm:p-6">{body}</Link>
+            : <div key={label} className="card-cream p-5 sm:p-6">{body}</div>;
         })}
       </section>
 

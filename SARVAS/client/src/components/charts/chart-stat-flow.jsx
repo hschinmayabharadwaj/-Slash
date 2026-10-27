@@ -16,7 +16,7 @@ function formatStatValue(value, formatOptions, prefix, suffix) {
 
 /**
  * Shared value + label stack (same layout as pie / ring centers). Counts with
- * anime.js: NumberFlow injects an inline <style>, which our CSP blocks.
+ * GSAP: NumberFlow injects an inline <style>, which our CSP blocks.
  * Parent should provide flex alignment and sizing when needed.
  */
 export function ChartStatFlow({

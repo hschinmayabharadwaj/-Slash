@@ -78,7 +78,7 @@ function IndexBar({ owner, name, onError }) {
       )}
       {st.error && <span className="text-bad">{st.error}</span>}
       {st.state !== 'indexing' && (
-        <button type="button" onClick={reindex} className="inline-flex items-center gap-1 text-primary hover:underline">
+        <button type="button" onClick={reindex} className="inline-flex items-center gap-1 text-link hover:underline">
           <RefreshCw className="size-3" aria-hidden="true" />{st.state === 'missing' ? 'Index now' : 'Refresh'}
         </button>
       )}
@@ -148,7 +148,7 @@ function Ask({ owner, name, onError }) {
             className="rounded-md border bg-background p-4">
             <p className="font-medium">{a.question}</p>
             {STATUS_NOTE[a.status] && (
-              <p className={cn('tag mt-2', a.status === 'outside_context' ? 'border-bad/30 text-bad' : '')}>{STATUS_NOTE[a.status]}</p>
+              <p className={cn('tag mt-2', a.status === 'outside_context' ? 'bg-bad/10 text-bad' : '')}>{STATUS_NOTE[a.status]}</p>
             )}
             <div className="mt-2"><Markdown text={a.answer} /></div>
             {a.citations?.length > 0 && <Sources title="Sources" items={a.citations} />}
@@ -190,7 +190,7 @@ function Build({ owner, name, onError }) {
       </div>
       <ol className="flex flex-wrap gap-2 text-xs">
         {HOW.map((s, i) => (
-          <li key={s} className="tag"><span className="font-semibold text-primary">{i + 1}</span>{s}</li>
+          <li key={s} className="tag"><span className="font-semibold text-link">{i + 1}</span>{s}</li>
         ))}
       </ol>
       <form onSubmit={submit} className="space-y-4">
