@@ -1,35 +1,27 @@
-import { animate } from 'animejs';
 import { useEffect, useRef } from 'react';
+import { gsap } from '@/lib/motion';
 import { reducedMotion } from '@/lib/utils';
 
 const plain = (n) => Math.round(n).toLocaleString();
 
-// Counts from the last shown value to `value` with anime.js, writing the text
+// Counts from the last shown value to `value` (GSAP), writing the text
 // directly so React doesn't re-render every frame.
 export default function CountUp({ value, format = plain, className }) {
   const ref = useRef(null);
-  const shown = useRef(0);
+  const state = useRef({ n: 0 });
   const fmt = useRef(format);
   fmt.current = format;
 
   useEffect(() => {
     const el = ref.current;
+    const draw = () => { el.textContent = fmt.current(state.current.n); };
     if (reducedMotion()) {
-      shown.current = value;
-      el.textContent = fmt.current(value);
+      state.current.n = value;
+      draw();
       return undefined;
     }
-    const state = { n: shown.current };
-    const anim = animate(state, {
-      n: value,
-      duration: 1100,
-      ease: 'outExpo',
-      onUpdate: () => {
-        shown.current = state.n;
-        el.textContent = fmt.current(state.n);
-      },
-    });
-    return () => anim.pause();
+    const tween = gsap.to(state.current, { n: value, duration: 1.1, ease: 'expo.out', onUpdate: draw });
+    return () => tween.kill();
   }, [value]);
 
   return <span ref={ref} className={className}>{format(0)}</span>;

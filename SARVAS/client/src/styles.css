@@ -1,30 +1,37 @@
 @import "tailwindcss";
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+@import "@fontsource/cormorant-garamond/500.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
-/* Design tokens. Fonts are bundled (the CSP allows only 'self'). */
+/* Tokens from DESIGN.md: cream canvas, coral accent, warm-dark product surfaces.
+   Fonts are bundled (the CSP allows only 'self'). */
 :root {
-  --background: #fafafa;
-  --foreground: #0b0b0f;
-  --card: #ffffff;
-  --muted: #f3f3f6;
-  --muted-foreground: #63636e;
-  --border: #e4e4ea;
-  --primary: #5b4cf5;
+  --background: #faf9f5;      /* canvas */
+  --foreground: #141413;      /* ink */
+  --body: #3d3d3a;
+  --card: #faf9f5;            /* cards sit on the canvas with a hairline */
+  --muted: #efe9de;           /* surface-card */
+  --muted-strong: #e8e0d2;    /* surface-cream-strong */
+  --muted-foreground: #6c6a64;
+  --border: #e6dfd8;          /* hairline */
+  --primary: #cc785c;         /* coral */
+  --primary-active: #a9583e;
   --primary-foreground: #ffffff;
-  --ring: #5b4cf5;
-  --ok: #15803d;
-  --bad: #dc2626;
-  --warn: #b45309;
-  --add: #e7f8ec;
-  --del: #fdecec;
-  --chart-1: #5b4cf5;
-  --chart-2: #0ea5e9;
-  --chart-3: #10b981;
-  --chart-4: #f59e0b;
-  --chart-5: #ef4444;
-  --radius: 0.75rem;
-  /* bklit charts */
+  --link: #a9583e;            /* coral text needs the darker shade for contrast on cream */
+  --ring: #cc785c;
+  --dark: #181715;            /* surface-dark: code windows, product chrome, footer */
+  --dark-soft: #1f1e1b;
+  --dark-elevated: #252320;
+  --on-dark: #faf9f5;
+  --on-dark-soft: #a09d96;
+  --ok: #3d8a4f;
+  --bad: #c64545;
+  --warn: #a87c0c;
+  --chart-1: #cc785c;
+  --chart-2: #e8a55a;
+  --chart-3: #5db872;
+  --chart-4: #5db8a6;
+  --chart-5: #c64545;
   --chart-background: var(--card);
   --chart-foreground: var(--foreground);
   --chart-foreground-muted: var(--muted);
@@ -32,41 +39,41 @@
   color-scheme: light;
 }
 
+/* DESIGN.md is light-only; dark mode reuses its warm product surfaces. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #08080b;
-    --foreground: #ededf2;
-    --card: #101015;
-    --muted: #17171d;
-    --muted-foreground: #9d9daa;
-    --border: #24242c;
-    --primary: #8b7dff;
-    --primary-foreground: #0b0b0f;
-    --ring: #8b7dff;
-    --ok: #4ade80;
-    --bad: #f87171;
-    --warn: #fbbf24;
-    --add: #0f2418;
-    --del: #2a1214;
-    --chart-1: #8b7dff;
-    --chart-2: #38bdf8;
-    --chart-3: #34d399;
-    --chart-4: #fbbf24;
-    --chart-5: #f87171;
+    --background: #181715;
+    --foreground: #faf9f5;
+    --body: #d6d3cc;
+    --card: #1f1e1b;
+    --muted: #252320;
+    --muted-strong: #2e2c28;
+    --muted-foreground: #a09d96;
+    --border: #2f2d29;
+    --link: #e0a48c;
+    --dark: #121110;
+    --dark-soft: #191816;
+    --dark-elevated: #252320;
+    --ok: #5db872;
+    --bad: #e06c6c;
+    --warn: #d4a017;
     color-scheme: dark;
   }
 }
 
 @theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: "Cormorant Garamond", "Tiempos Headline", Garamond, "Times New Roman", serif;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-body: var(--body);
   --color-card: var(--card);
   --color-card-foreground: var(--foreground);
   --color-popover: var(--card);
   --color-popover-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--muted);
   --color-accent-foreground: var(--foreground);
@@ -74,7 +81,14 @@
   --color-input: var(--border);
   --color-ring: var(--ring);
   --color-primary: var(--primary);
+  --color-primary-active: var(--primary-active);
   --color-primary-foreground: var(--primary-foreground);
+  --color-link: var(--link);
+  --color-dark: var(--dark);
+  --color-dark-soft: var(--dark-soft);
+  --color-dark-elevated: var(--dark-elevated);
+  --color-on-dark: var(--on-dark);
+  --color-on-dark-soft: var(--on-dark-soft);
   --color-ok: var(--ok);
   --color-bad: var(--bad);
   --color-warn: var(--warn);
@@ -84,57 +98,63 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-label: var(--chart-label);
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 }
 
 @layer base {
   * { @apply border-border; }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-size: 15px;
+    @apply bg-background font-sans text-body antialiased;
+    font-size: 16px;
     line-height: 1.55;
   }
-  a { @apply text-primary underline-offset-4 hover:underline; }
-  code { @apply font-mono text-[0.9em]; }
+  a { @apply text-link underline-offset-4 hover:underline; }
+  code { @apply font-mono text-[0.88em]; }
   :focus-visible { @apply outline-2 outline-offset-2 outline-ring; }
-  h1 { @apply text-2xl font-semibold tracking-tight; }
-  h2 { @apply text-lg font-semibold tracking-tight; }
-  h3 { @apply text-sm font-semibold mt-5 mb-2; }
+  /* Serif display at weight 500 (the Cormorant substitute's equivalent of 400) with negative tracking. */
+  h1, h2, .display { @apply font-serif font-medium text-foreground; }
+  h1 { font-size: clamp(2rem, 1.4rem + 2vw, 2.75rem); line-height: 1.1; letter-spacing: -0.02em; }
+  h2 { font-size: 1.6rem; line-height: 1.2; letter-spacing: -0.01em; }
+  h3 { @apply mt-6 mb-2 font-sans text-base font-medium text-foreground; }
 }
 
-/* Shared building blocks, so pages read as markup rather than class soup. */
 @layer components {
-  .card { @apply rounded-lg border bg-card p-5 sm:p-6 shadow-[0_1px_0_0_rgb(0_0_0/0.02)]; }
+  .card { @apply rounded-lg border bg-card p-6 sm:p-8; }
+  .card-cream { @apply rounded-lg bg-muted p-6 sm:p-8; }
+  .card-dark { @apply rounded-lg bg-dark p-6 text-on-dark sm:p-8; }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border bg-card px-3.5 py-2 text-sm font-medium
-      text-foreground no-underline transition-colors hover:bg-muted hover:no-underline disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-md border bg-background px-5 text-sm font-medium
+      text-foreground no-underline transition-colors hover:no-underline active:bg-muted disabled:pointer-events-none disabled:opacity-50;
   }
-  .btn-primary { @apply border-transparent bg-primary text-primary-foreground hover:bg-primary/90; }
-  .btn-danger { @apply text-bad hover:bg-bad/10; }
+  .btn-primary { @apply border-transparent bg-primary text-primary-foreground active:bg-primary-active disabled:bg-[#e6dfd8] disabled:text-muted-foreground disabled:opacity-100; }
+  .btn-danger { @apply text-bad active:bg-bad/10; }
   .btn-ghost { @apply border-transparent bg-transparent text-muted-foreground hover:text-foreground; }
-  .tag {
-    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground;
-  }
+  .btn-on-dark { @apply border-transparent bg-dark-elevated text-on-dark; }
+  .tag { @apply inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-[13px] font-medium text-foreground; }
+  .eyebrow { @apply text-xs font-medium uppercase tracking-[1.5px] text-muted-foreground; }
   .field {
-    @apply w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70
-      focus:outline-none focus:ring-2 focus:ring-ring/40;
+    @apply w-full rounded-md border bg-background px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground/70
+      focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/15;
   }
   .muted { @apply text-muted-foreground; }
-  .eyebrow { @apply text-xs font-medium uppercase tracking-wider text-muted-foreground; }
   .table { @apply w-full text-sm; }
-  .table th { @apply py-2 pr-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground; }
-  .table td { @apply border-t py-2.5 pr-3 align-top; }
+  .table th { @apply py-2 pr-3 text-left text-xs font-medium uppercase tracking-[1.5px] text-muted-foreground; }
+  .table td { @apply border-t py-3 pr-3 align-top; }
   .md p { @apply my-1.5; }
   .md ul { @apply my-1.5 list-disc pl-5; }
-  pre.code, pre.diff { @apply m-0 overflow-x-auto rounded-md border bg-background font-mono text-[12.5px] leading-relaxed; }
-  pre.code { @apply px-3 py-2.5; }
-  pre.diff { @apply py-2; }
-  pre.diff span { @apply block whitespace-pre px-3; }
-  pre.diff .add { background: var(--add); }
-  pre.diff .del { background: var(--del); }
-  pre.diff .hunk { @apply text-muted-foreground; }
+  /* Code and diffs are the dark "code window" surface. */
+  pre.code, pre.diff {
+    @apply m-0 overflow-x-auto rounded-lg bg-dark font-mono text-[13px] leading-relaxed text-on-dark;
+  }
+  pre.code { @apply px-5 py-4; }
+  pre.diff { @apply py-3; }
+  pre.diff span { @apply block whitespace-pre px-5; }
+  pre.diff .add { background: rgb(93 184 114 / 0.16); color: #b9e4c3; }
+  pre.diff .del { background: rgb(198 69 69 / 0.18); color: #f0b4b4; }
+  pre.diff .hunk { @apply text-on-dark-soft; }
 }
 
 @keyframes kokonutui-shimmer-text {

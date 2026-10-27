@@ -7,6 +7,7 @@ import CommandBar from './components/CommandBar.jsx';
 import Logo from './components/Logo.jsx';
 import { PageLoading } from './components/Skeleton.jsx';
 import ShimmerText from './components/kokonutui/shimmer-text';
+import { scrollToTop } from './lib/motion';
 import { cn } from './lib/utils';
 
 // One chunk per page, so sign-in doesn't download the dashboard's charts.
@@ -26,7 +27,7 @@ export default function App() {
 
   const refresh = useCallback(() => getSession().then(setSession).catch((e) => setError(e.message)), []);
   useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => { setError(''); window.scrollTo(0, 0); }, [path]);
+  useEffect(() => { setError(''); scrollToTop(); }, [path]);
 
   // Shared error handler for pages: a signed-out response returns to Connect.
   const onError = useCallback((e) => {
@@ -63,7 +64,7 @@ export default function App() {
   return (
     <div className="min-h-dvh">
       <Header path={path} login={session.login} isAdmin={isAdmin} onLogout={logout} />
-      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
         <AnimatePresence>
           {error && (
             <motion.div role="alert" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
@@ -95,10 +96,10 @@ function Header({ path, login, isAdmin, onLogout }) {
   const nav = (pillId) => (
     <>
       {links.map(([to, label, Icon]) => (
-        <Link key={to} to={to} className={cn('relative flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm no-underline hover:no-underline',
+        <Link key={to} to={to} className={cn('relative flex items-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium no-underline hover:no-underline',
           section === to ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>
           {section === to && (
-            <motion.span layoutId={pillId} className="absolute inset-0 rounded-full bg-muted" transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }} />
+            <motion.span layoutId={pillId} className="absolute inset-0 rounded-md bg-muted" transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }} />
           )}
           <Icon className="relative size-4" aria-hidden="true" />
           <span className="relative">{label}</span>
@@ -108,9 +109,9 @@ function Header({ path, login, isAdmin, onLogout }) {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-5xl items-center gap-3 px-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-2 font-semibold text-foreground no-underline hover:no-underline">
+    <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur-md">
+      <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+        <Link to="/" className="flex items-center gap-2 font-medium text-foreground no-underline hover:no-underline">
           <Logo /> SARVAS
         </Link>
         <nav className="ml-3 hidden items-center gap-1 md:flex" aria-label="Main">{nav('pill')}</nav>
@@ -121,7 +122,7 @@ function Header({ path, login, isAdmin, onLogout }) {
           <LogOut className="size-4" aria-hidden="true" /><span className="sr-only sm:not-sr-only">Disconnect</span>
         </button>
       </div>
-      <nav className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-3 pb-2 md:hidden" aria-label="Main">{nav('pill-mobile')}</nav>
+      <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-3 pb-2 md:hidden" aria-label="Main">{nav('pill-mobile')}</nav>
     </header>
   );
 }

@@ -25,10 +25,10 @@ export function taskStatus(status) {
 }
 
 export const TONE_CLASS = {
-  working: 'border-primary/30 bg-primary/10 text-primary',
-  attention: 'border-warn/30 bg-warn/10 text-warn',
-  done: 'border-ok/30 bg-ok/10 text-ok',
-  failed: 'border-bad/30 bg-bad/10 text-bad',
+  working: 'bg-primary/12 text-link',
+  attention: 'bg-warn/12 text-warn',
+  done: 'bg-ok/12 text-ok',
+  failed: 'bg-bad/10 text-bad',
   stopped: 'text-muted-foreground',
 };
 

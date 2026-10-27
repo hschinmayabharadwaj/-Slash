@@ -34,8 +34,8 @@ export default function Tasks({ onError }) {
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by status">
         {FILTERS.map(([id, label, test]) => (
           <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)}
-            className={cn('tag cursor-pointer px-3 py-1 text-sm transition-colors',
-              filter === id ? 'border-primary bg-primary text-primary-foreground' : 'hover:text-foreground')}>
+            className={cn('inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium',
+              filter === id ? 'bg-muted-strong text-foreground' : 'text-muted-foreground')}>
             {label}
             <span className="tabular-nums opacity-70">{tasks.filter((t) => test(taskStatus(t.status).tone)).length}</span>
           </button>

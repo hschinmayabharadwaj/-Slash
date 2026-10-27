@@ -1,16 +1,7 @@
-import { useId } from 'react';
-
 export default function Logo({ className = 'size-7' }) {
-  const id = useId();
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#8b7dff" />
-          <stop offset="1" stopColor="#38bdf8" />
-        </linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="9" fill={`url(#${id})`} />
+      <rect width="32" height="32" rx="8" fill="#cc785c" />
       <path d="M21 11.5c-1-1.6-2.9-2.5-5-2.5-2.8 0-4.8 1.5-4.8 3.6 0 4.9 9.8 2.6 9.8 7.3 0 2.2-2.1 3.6-5 3.6-2.3 0-4.3-1-5.2-2.7"
         fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
     </svg>
