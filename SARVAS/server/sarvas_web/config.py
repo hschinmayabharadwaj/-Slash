@@ -78,6 +78,7 @@ def load_config(config_path: str | os.PathLike = "config.json") -> dict:
     gh, sec = config["github"], config["security"]
     gh["clientId"] = gh.get("clientId") or os.environ.get("GITHUB_CLIENT_ID", "")
     gh["clientSecret"] = gh.get("clientSecret") or os.environ.get("GITHUB_CLIENT_SECRET", "")
+    gh["appSlug"] = gh.get("appSlug") or os.environ.get("GITHUB_APP_SLUG", "")
     config["agentService"]["token"] = config["agentService"].get("token") or os.environ.get("AGENT_SERVICE_TOKEN", "")
     config["web"]["port"] = int(config["web"]["port"] or DEFAULTS["web"]["port"])
     config["web"]["extraHosts"] = _as_list(config["web"].get("extraHosts"))
@@ -106,6 +107,9 @@ def is_local(config: dict) -> bool:
 def validate(config: dict) -> None:
     if not config["github"]["clientId"] or not config["github"]["clientSecret"]:
         raise ValueError("github.clientId and github.clientSecret (your GitHub App OAuth credentials) are required")
+    # It becomes part of a github.com link, so only GitHub's slug alphabet is allowed.
+    if config["github"].get("appSlug") and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", config["github"]["appSlug"]):
+        raise ValueError("github.appSlug (GITHUB_APP_SLUG) must be the App's URL name, e.g. sarvas-agent")
     base = urlparse(config["web"]["baseUrl"])
     if not base.hostname or not (base.scheme == "https" or (base.scheme == "http" and is_local(config))):
         raise ValueError("web.baseUrl must be https://, or http://localhost / http://127.0.0.1")

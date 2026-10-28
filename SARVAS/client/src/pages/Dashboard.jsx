@@ -1,4 +1,4 @@
-import { CircleAlert, FolderGit2, GitPullRequest, Loader } from 'lucide-react';
+import { ArrowRight, Check, CircleAlert, FolderGit2, GitPullRequest, Loader } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import CountUp from '../components/CountUp.jsx';
@@ -11,6 +11,9 @@ import { RingChart } from '../components/charts/ring-chart';
 import { taskStatus } from '../lib/status';
 import { Link } from '../router.jsx';
 import Repos from './Repos.jsx';
+
+// GitHub adds this when it sends people back from the install page (the App's Setup URL).
+const returnedFromGitHub = new URLSearchParams(window.location.search).get('setup_action');
 
 const ROLE_HELP = {
   requester: 'You can ask questions and request changes. Engineers review and merge every pull request.',
@@ -26,7 +29,7 @@ const SLICES = [
   ['stopped', 'Stopped or failed', 'var(--chart-5)'],
 ];
 
-export default function Dashboard({ onError }) {
+export default function Dashboard({ onError, installUrl }) {
   const [me, setMe] = useState(null);
   const [repos, setRepos] = useState(null);
   const [tasks, setTasks] = useState(null);
@@ -35,6 +38,7 @@ export default function Dashboard({ onError }) {
     api.me().then(setMe).catch(onError);
     api.repos().then((d) => setRepos(d.repos)).catch(onError);
     api.tasks().then((d) => setTasks(d.tasks)).catch(onError);
+    if (returnedFromGitHub) window.history.replaceState({}, '', '/');
   }, [onError]);
 
   if (!me) return <PageLoading />;
@@ -70,6 +74,14 @@ export default function Dashboard({ onError }) {
           </p>
         </div>
       </section>
+
+      {returnedFromGitHub && me.installations.length > 0 && (
+        <p role="status" className="rounded-lg border border-ok/30 bg-ok/10 px-4 py-3 text-sm text-ok">
+          GitHub saved your repository choice. They're listed below.
+        </p>
+      )}
+
+      {me.installations.length === 0 && <InstallApp login={me.login} installUrl={installUrl} />}
 
       {me.killSwitch && (
         <p role="status" className="rounded-lg border border-bad/30 bg-bad/10 px-4 py-3 text-sm text-bad">
@@ -119,7 +131,7 @@ export default function Dashboard({ onError }) {
             </>
           )}
         </section>
-        <Repos repos={repos} className="lg:col-span-2" />
+        <Repos repos={repos} installUrl={installUrl} className="lg:col-span-2" />
       </div>
 
       <section className="card">
@@ -147,5 +159,39 @@ export default function Dashboard({ onError }) {
         </p>
       </section>
     </Stagger>
+  );
+}
+
+// First run: the App isn't installed anywhere this person can see yet.
+function InstallApp({ login, installUrl }) {
+  const steps = [
+    [true, `Signed in as @${login}`],
+    [false, 'Install the GitHub App and choose All repositories, or only the ones you pick'],
+    [false, "You'll come straight back here with your repositories ready"],
+  ];
+  return (
+    <section className="rounded-lg bg-primary p-8 text-primary-foreground sm:p-12">
+      <h2 className="text-3xl text-primary-foreground sm:text-4xl">Connect your repositories</h2>
+      <ol className="mt-6 space-y-3">
+        {steps.map(([done, text], i) => (
+          <li key={text} className="flex items-center gap-3">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary-foreground/20 text-xs font-medium">
+              {done ? <Check className="size-3.5" aria-hidden="true" /> : i + 1}
+            </span>
+            {text}
+          </li>
+        ))}
+      </ol>
+      {installUrl ? (
+        // Full-page navigation: GitHub's own page grants the access, then returns via the App's Setup URL.
+        <a href={installUrl} className="btn mt-8 h-11 border-transparent bg-background px-6 text-foreground active:bg-muted">
+          Install the GitHub App <ArrowRight className="size-4" aria-hidden="true" />
+        </a>
+      ) : (
+        <p className="mt-8 text-sm text-primary-foreground/90">
+          Ask your administrator for the App's install link (they can show it here by setting GITHUB_APP_SLUG).
+        </p>
+      )}
+    </section>
   );
 }

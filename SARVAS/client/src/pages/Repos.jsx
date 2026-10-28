@@ -1,9 +1,9 @@
-import { ChevronRight, FolderGit2, Lock, Search } from 'lucide-react';
+import { ChevronRight, FolderGit2, Lock, Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../lib/utils';
 import { Link } from '../router.jsx';
 
-export default function Repos({ repos, className }) {
+export default function Repos({ repos, installUrl, className }) {
   const [filter, setFilter] = useState('');
   const shown = (repos || []).filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()));
 
@@ -18,9 +18,12 @@ export default function Repos({ repos, className }) {
             <input className="field w-48 py-1.5 pl-8" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter…" />
           </label>
         )}
+        {installUrl && (
+          <a href={installUrl} className="btn h-9 px-3.5"><Plus className="size-4" aria-hidden="true" />Add or change</a>
+        )}
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        Where the app is installed and you have access. Missing one? Install the GitHub App on it from your GitHub settings.
+        Where the app is installed and you have access. Missing one? Use “Add or change” to pick more on GitHub.
       </p>
       {repos === null && <p className="mt-4 text-sm text-muted-foreground">Loading…</p>}
       {repos?.length === 0 && <p className="mt-4 text-sm">No repositories yet.</p>}

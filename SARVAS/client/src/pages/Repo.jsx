@@ -1,4 +1,4 @@
-import { ArrowLeft, FileText, FolderGit2, GitBranch, Lock, MessageSquareCode, RefreshCw, Wand2 } from 'lucide-react';
+import { ArrowLeft, FileText, FolderGit2, GitBranch, GitPullRequest, Lock, MessageSquareCode, RefreshCw, Wand2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
@@ -13,6 +13,8 @@ import { Link, navigate } from '../router.jsx';
 export default function Repo({ owner, name, onError }) {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('ask');
+  // An Ask answer handed to Build as a starting request.
+  const [draft, setDraft] = useState(null);
 
   useEffect(() => { api.repo(owner, name).then(setData).catch(onError); }, [owner, name, onError]);
 
@@ -42,8 +44,9 @@ export default function Repo({ owner, name, onError }) {
         value={tab}
         onChange={setTab}
         items={[
-          { id: 'ask', title: 'Ask', icon: MessageSquareCode, content: <Ask owner={owner} name={name} onError={onError} /> },
-          { id: 'build', title: 'Request a change', icon: Wand2, content: <Build owner={owner} name={name} onError={onError} /> },
+          { id: 'ask', title: 'Ask', icon: MessageSquareCode, content: <Ask owner={owner} name={name} onError={onError}
+            onRequestChange={(text) => { setDraft({ id: Date.now(), text }); setTab('build'); }} /> },
+          { id: 'build', title: 'Request a change', icon: Wand2, content: <Build key={draft?.id} initial={draft?.text} owner={owner} name={name} onError={onError} /> },
           { id: 'readme', title: 'README', icon: FileText, content: <Readme owner={owner} name={name} data={data} onError={onError} /> },
         ]}
       />
@@ -115,7 +118,14 @@ function Sources({ title, items }) {
   );
 }
 
-function Ask({ owner, name, onError }) {
+// A change request seeded from a question and the files its answer cited.
+function requestFromAnswer(a) {
+  const files = [...new Set((a.citations || []).map((c) => c.path))].slice(0, 10);
+  const text = files.length ? `${a.question}\n\nRelevant files: ${files.join(', ')}` : a.question;
+  return text.slice(0, 2000);
+}
+
+function Ask({ owner, name, onError, onRequestChange }) {
   const [answers, setAnswers] = useState([]);
   const [busy, setBusy] = useState('');
 
@@ -156,6 +166,9 @@ function Ask({ owner, name, onError }) {
             {a.disclosure && (
               <p className="mt-3 text-xs text-muted-foreground">{a.disclosure}{a.commit && ` · commit ${a.commit.slice(0, 7)}`}</p>
             )}
+            <button type="button" className="btn mt-4 h-9 px-3.5" onClick={() => onRequestChange(requestFromAnswer(a))}>
+              <GitPullRequest className="size-4" aria-hidden="true" />Turn into a change request
+            </button>
           </motion.article>
         ))}
       </AnimatePresence>
@@ -165,8 +178,8 @@ function Ask({ owner, name, onError }) {
 
 const HOW = ['You describe it', 'Agent plans, you approve', 'Built and checked in a sandbox', 'You approve the diff', 'Engineer merges the PR'];
 
-function Build({ owner, name, onError }) {
-  const [request, setRequest] = useState('');
+function Build({ owner, name, onError, initial = '' }) {
+  const [request, setRequest] = useState(initial);
   const [criteria, setCriteria] = useState('');
   const [busy, setBusy] = useState(false);
 

@@ -44,7 +44,7 @@ export default function App() {
   }
 
   const query = new URLSearchParams(window.location.search);
-  if (!session.signedIn) return <Suspense fallback={null}><Connect authError={query.get('error')} /></Suspense>;
+  if (!session.signedIn) return <Suspense fallback={null}><Connect authError={query.get('error')} installUrl={session.installUrl} /></Suspense>;
 
   const route = match(path);
   const isAdmin = session.role === 'admin';
@@ -55,7 +55,7 @@ export default function App() {
   else if (route.page === 'tasks') page = <Tasks onError={onError} />;
   else if (route.page === 'activity') page = <Activity onError={onError} />;
   else if (route.page === 'admin' && isAdmin) page = <Admin onError={onError} />;
-  else page = <Dashboard onError={onError} />;
+  else page = <Dashboard onError={onError} installUrl={session.installUrl} />;
 
   const logout = async () => {
     try { await api.logout(); } finally { navigate('/'); refresh(); }
