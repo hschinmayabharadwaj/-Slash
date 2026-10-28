@@ -34,6 +34,7 @@ GitHub → **Settings → Developer settings → GitHub Apps → New GitHub App*
 | Setting | Value |
 |---|---|
 | Callback URL | `https://<your SARVAS address>/auth/callback` (or `http://localhost:8765/auth/callback`) |
+| Setup URL | `https://<your SARVAS address>/`, with **Redirect on update** ticked, so people return to the dashboard after picking repositories |
 | Expire user authorization tokens | **On** (8-hour tokens with refresh) |
 | Request user authorization during installation | Off |
 | Webhook | **Off** |
@@ -159,6 +160,7 @@ substituted from the environment).
 | `SARVAS_ENGINEERS`, `SARVAS_ADMINS` | Roles (see README → Roles) |
 | `SARVAS_ALLOWED_REPOS` | Optional `owner/name,…` allowlist on top of the App installation |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub App OAuth credentials (sign-in) |
+| `GITHUB_APP_SLUG` | The App's URL name (`github.com/apps/<slug>`). Shows "Install the GitHub App" on the sign-in page and dashboard |
 | `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY_FILE` | Installation access for Build tasks (leave the ID empty to disable Build) |
 | `AI_PROVIDER` | `ollama`, `gemini`, `openai` or `sim` |
 | `AI_MODEL` | e.g. `qwen2.5-coder:7b` (Ollama), `gemini-3.8-flash`, or the model ID your OpenAI-compatible host uses |

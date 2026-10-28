@@ -33,7 +33,7 @@ function ConnectButton({ className = 'btn-primary' }) {
   );
 }
 
-export default function Connect({ authError }) {
+export default function Connect({ authError, installUrl }) {
   const hero = useRef(null);
 
   // Headline rises in line by line; the rest follows.
@@ -73,6 +73,7 @@ export default function Connect({ authError }) {
           )}
           <div data-fade className="mt-8 flex flex-wrap items-center gap-5">
             <ConnectButton />
+            {installUrl && <a href={installUrl} className="btn h-11 px-6">Install the GitHub App</a>}
             <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <KeyRound className="size-4" aria-hidden="true" /> Never asks for your password
             </span>

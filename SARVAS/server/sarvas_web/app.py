@@ -185,8 +185,11 @@ def create_app(config: dict, store, agent, http: httpx.Client | None = None, ind
                 raise ApiError(500, "Could not start a session.")
             set_cookie(response, new_sid)
         login = session.get("login")
+        slug = config["github"].get("appSlug")
+        # GitHub's own page, where the user picks all or selected repositories.
+        install_url = f"https://github.com/apps/{slug}/installations/new" if slug else None
         return {"signedIn": bool(login), "login": login, "role": role_of(config, login) if login else None,
-                "csrf": session["csrf"], "actions": ACTIONS}
+                "csrf": session["csrf"], "actions": ACTIONS, "installUrl": install_url}
 
     @app.post("/api/logout")
     def logout(request: Request, _body: dict = Depends(csrf)):

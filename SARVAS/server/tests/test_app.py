@@ -166,8 +166,19 @@ def test_security_headers_and_session_bootstrap(env):
     assert len(res.json()["csrf"]) > 30
     assert "script-src 'self'" in res.headers["content-security-policy"]
     assert res.headers["x-frame-options"] == "DENY"
+    assert res.json()["installUrl"] is None
     assert res.headers["cache-control"] == "no-store"
     assert "httponly" in res.headers["set-cookie"].lower()
+
+
+def test_install_link_uses_a_validated_app_slug(env, monkeypatch):
+    monkeypatch.setenv("GITHUB_APP_SLUG", "sarvas-agent")
+    config = load_config(env.tmp / "config.json")
+    c = Client(create_app(config, env.store, FakeAgent(), env.gh.http), env.gh)
+    assert c.get("/api/session").json()["installUrl"] == "https://github.com/apps/sarvas-agent/installations/new"
+    monkeypatch.setenv("GITHUB_APP_SLUG", "evil.example/x?")
+    with pytest.raises(ValueError, match="appSlug"):
+        load_config(env.tmp / "config.json")
 
 
 def test_unexpected_host_is_rejected(env):
