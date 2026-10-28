@@ -11,6 +11,7 @@ gsap.registerPlugin(SplitText);
 const MESSAGES = {
   state: "The sign-in link expired or didn't come from this page. Please try again.",
   cancelled: 'GitHub authorization was cancelled.',
+  not_allowed: "Your GitHub account isn't on this SARVAS's list of allowed users. Ask an administrator to add your GitHub username.",
 };
 
 // Optional Spline scene, embedded through Spline's own viewer so its code runs

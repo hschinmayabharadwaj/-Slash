@@ -17,5 +17,6 @@ export default defineConfig({
       '/auth': { target: 'http://127.0.0.1:8765', changeOrigin: false },
     },
   },
-  build: { outDir: 'dist', sourcemap: false },
+  // Never inline assets as data: URIs; the CSP only allows fonts from 'self'.
+  build: { outDir: 'dist', sourcemap: false, assetsInlineLimit: 0 },
 });
