@@ -1,11 +1,6 @@
+// The project logo (client/public/logo.png, from SARVAS/logo.jpeg).
 export default function Logo({ className = 'size-7' }) {
-  return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="#cc785c" />
-      <path d="M21 11.5c-1-1.6-2.9-2.5-5-2.5-2.8 0-4.8 1.5-4.8 3.6 0 4.9 9.8 2.6 9.8 7.3 0 2.2-2.1 3.6-5 3.6-2.3 0-4.3-1-5.2-2.7"
-        fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
-    </svg>
-  );
+  return <img src="/logo.png" alt="" width="28" height="28" className={`${className} rounded-md`} />;
 }
 
 export function GitHubMark({ className = 'size-4' }) {
