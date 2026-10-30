@@ -57,9 +57,9 @@ export default function Connect({ authError, installUrl }) {
         <a href="/auth/login" className="btn btn-ghost hidden sm:inline-flex">Sign in</a>
       </header>
 
-      <section ref={hero} className="mx-auto grid max-w-[1200px] items-center gap-12 px-6 py-16 lg:grid-cols-2 lg:py-24">
+      <section ref={hero} className="backdrop-grid mx-auto grid max-w-[1200px] items-center gap-12 px-6 py-16 lg:grid-cols-2 lg:py-24">
         <div>
-          <h1 data-split className="display text-[2.5rem] leading-[1.05] tracking-[-0.03em] sm:text-6xl lg:text-[4.25rem]">
+          <h1 data-split className="display text-[2.5rem] leading-[1.02] tracking-[-0.045em] sm:text-6xl lg:text-[4.25rem]">
             Your repositories, with you in charge.
           </h1>
           <p data-fade className="mt-6 max-w-xl text-lg text-body">
@@ -89,7 +89,7 @@ export default function Connect({ authError, installUrl }) {
 
       <section className="bg-muted py-24">
         <div className="mx-auto max-w-[1200px] px-6">
-          <h2 className="display max-w-2xl text-4xl leading-[1.1] tracking-[-0.02em] sm:text-5xl">
+          <h2 className="display max-w-2xl text-4xl leading-[1.08] tracking-[-0.04em] sm:text-5xl">
             Every change is planned, checked and reviewed.
           </h2>
           <Stagger onScroll className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -105,14 +105,14 @@ export default function Connect({ authError, installUrl }) {
       </section>
 
       <Stagger onScroll className="mx-auto max-w-[1200px] px-6 py-24">
-        <div className="rounded-lg bg-primary px-8 py-14 text-primary-foreground sm:px-16 sm:py-16">
-          <h2 className="display max-w-2xl text-3xl leading-[1.15] tracking-[-0.01em] text-primary-foreground sm:text-4xl">
+        <div className="card backdrop-grid px-8 py-14 sm:px-16 sm:py-16">
+          <h2 className="display max-w-2xl text-3xl leading-[1.15] tracking-[-0.03em] sm:text-4xl">
             Acts with your GitHub permissions, only where the app is installed.
           </h2>
-          <p className="mt-4 max-w-xl text-primary-foreground/90">
+          <p className="mt-4 max-w-xl">
             You approve the plan and the diff. An engineer merges the pull request. The agent can’t approve or merge its own work.
           </p>
-          <div className="mt-8"><ConnectButton className="border-transparent bg-background text-foreground active:bg-muted" /></div>
+          <div className="mt-8"><ConnectButton /></div>
         </div>
       </Stagger>
 
@@ -145,7 +145,7 @@ function PipelineWindow() {
 
   return (
     <div ref={ref} aria-hidden="true" className="card-dark mx-auto w-full max-w-lg rounded-xl">
-      <p className="font-serif text-2xl leading-tight tracking-[-0.01em] text-on-dark">From your request to a pull request</p>
+      <p className="font-display text-2xl font-semibold leading-tight tracking-[-0.03em] text-on-dark">From your request to a pull request</p>
       <div className="mt-5 h-1 overflow-hidden rounded-full bg-dark-elevated">
         <div data-bar className="h-full origin-left rounded-full bg-primary" />
       </div>

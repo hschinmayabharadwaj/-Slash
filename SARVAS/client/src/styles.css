@@ -1,77 +1,58 @@
-/* Hallmark · shape: kept · genre: modern-minimal · theme: brand (DESIGN.md) · depth: polish · hero: kept · nav: kept · footer: kept · signature: kept
+/* Hallmark · shape: kept · genre: modern-minimal · theme: custom (dark dev-tool, after projectx.cloud and agentmail.to) · depth: restyle · hero: kept · nav: kept · footer: kept · signature: kept
  * axes: kept · contrast: pass · fold: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: polish only · weakest: V, judged from code without a render pass; the drawn window was replaced by the real pipeline steps */
+/* Hallmark · pre-emit critique: restyle only · weakest: V, judged from code without a render pass */
 @import "tailwindcss";
-@import "@fontsource/cormorant-garamond/500.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/manrope";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
 
-/* Tokens from DESIGN.md: cream canvas, coral accent, warm-dark product surfaces.
+/* Dark, near-black surfaces, one mint signal, Manrope with DM Mono labels.
    Fonts are bundled (the CSP allows only 'self'). */
 :root {
-  --background: #faf9f5;      /* canvas */
-  --foreground: #141413;      /* ink */
-  --body: #3d3d3a;
-  --card: #faf9f5;            /* cards sit on the canvas with a hairline */
-  --muted: #efe9de;           /* surface-card */
-  --muted-strong: #e8e0d2;    /* surface-cream-strong */
-  --muted-foreground: #6c6a64;
-  --border: #e6dfd8;          /* hairline */
-  --primary: #cc785c;         /* coral */
-  --primary-active: #a9583e;
-  --primary-foreground: #ffffff;
-  --link: #a9583e;            /* coral text needs the darker shade for contrast on cream */
-  --ring: #cc785c;
-  --dark: #181715;            /* surface-dark: code windows, product chrome, footer */
-  --dark-soft: #1f1e1b;
-  --dark-elevated: #252320;
-  --on-dark: #faf9f5;
-  --on-dark-soft: #a09d96;
-  --ok: #3d8a4f;
-  --bad: #c64545;
-  --warn: #a87c0c;
-  --chart-1: #cc785c;
-  --chart-2: #e8a55a;
-  --chart-3: #5db872;
-  --chart-4: #5db8a6;
-  --chart-5: #c64545;
-  --diff-add-bg: rgb(93 184 114 / 0.16);
-  --diff-add-ink: #b9e4c3;
-  --diff-del-bg: rgb(198 69 69 / 0.18);
-  --diff-del-ink: #f0b4b4;
+  --background: #0a0b0b;
+  --foreground: #ededed;
+  --body: #b6bbb8;
+  --card: #111312;
+  --muted: #171a19;
+  --muted-strong: #202423;
+  --muted-foreground: #8a908d;
+  --border: #232826;
+  --primary: #00bf8f;          /* mint */
+  --primary-active: #00a87e;
+  --primary-foreground: #04120e;
+  --link: #0df0b7;
+  --ring: #0df0b7;
+  --glow: rgb(0 191 143 / 0.16);
+  --grid: rgb(255 255 255 / 0.035);
+  --dark: #070808;             /* code windows and the footer sit one step darker */
+  --dark-soft: #0d0f0e;
+  --dark-elevated: #1a1e1c;
+  --on-dark: #ededed;
+  --on-dark-soft: #8a908d;
+  --ok: #34d399;
+  --bad: #f87171;
+  --warn: #fbbf24;
+  --disabled: #202423;
+  --diff-add-bg: rgb(52 211 153 / 0.14);
+  --diff-add-ink: #a7f3d0;
+  --diff-del-bg: rgb(248 113 113 / 0.14);
+  --diff-del-ink: #fecaca;
+  --chart-1: #00bf8f;
+  --chart-2: #b794f6;
+  --chart-3: #0df0b7;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
   --chart-background: var(--card);
   --chart-foreground: var(--foreground);
   --chart-foreground-muted: var(--muted);
   --chart-label: var(--muted-foreground);
-  color-scheme: light;
-}
-
-/* DESIGN.md is light-only; dark mode reuses its warm product surfaces. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #181715;
-    --foreground: #faf9f5;
-    --body: #d6d3cc;
-    --card: #1f1e1b;
-    --muted: #252320;
-    --muted-strong: #2e2c28;
-    --muted-foreground: #a09d96;
-    --border: #2f2d29;
-    --link: #e0a48c;
-    --dark: #121110;
-    --dark-soft: #191816;
-    --dark-elevated: #252320;
-    --ok: #5db872;
-    --bad: #e06c6c;
-    --warn: #d4a017;
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 @theme inline {
-  --font-serif: "Cormorant Garamond", "Tiempos Headline", Garamond, "Times New Roman", serif;
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-display: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-body: var(--body);
@@ -99,64 +80,76 @@
   --color-ok: var(--ok);
   --color-bad: var(--bad);
   --color-warn: var(--warn);
+  --color-disabled: var(--disabled);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-label: var(--chart-label);
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 18px;
 }
 
 @layer base {
   * { @apply border-border; }
   html, body { overflow-x: clip; }
-  html { scrollbar-color: var(--muted-foreground) var(--background); }
-  ::selection { background: var(--muted-strong); color: var(--foreground); }
+  html { scrollbar-color: var(--muted-strong) var(--background); }
+  ::selection { background: var(--glow); color: var(--foreground); }
   body {
     @apply bg-background font-sans text-body antialiased;
     font-size: 16px;
-    line-height: 1.55;
+    line-height: 1.6;
   }
   a { @apply text-link underline-offset-4 hover:underline; }
   code { @apply font-mono text-[0.88em]; }
   :focus-visible { @apply outline-2 outline-offset-2 outline-ring; }
-  /* Serif display at weight 500 (the Cormorant substitute's equivalent of 400) with negative tracking. */
-  h1, h2, .display { @apply font-serif font-medium text-foreground; text-wrap: balance; overflow-wrap: break-word; min-width: 0; }
-  h1 { font-size: clamp(2rem, 1.4rem + 2vw, 2.75rem); line-height: 1.1; letter-spacing: -0.02em; }
-  h2 { font-size: 1.6rem; line-height: 1.2; letter-spacing: -0.01em; }
-  h3 { @apply mt-6 mb-2 font-sans text-base font-medium text-foreground; }
+  h1, h2, .display {
+    @apply font-display font-semibold text-foreground;
+    text-wrap: balance; overflow-wrap: break-word; min-width: 0;
+  }
+  h1 { font-size: clamp(2rem, 1.4rem + 2vw, 2.75rem); line-height: 1.1; letter-spacing: -0.035em; }
+  h2 { font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.025em; }
+  h3 { @apply mt-6 mb-2 text-base font-semibold text-foreground; }
 }
 
 @layer components {
-  .card { @apply rounded-lg border bg-card p-6 sm:p-8; }
-  .card-cream { @apply rounded-lg bg-muted p-6 sm:p-8; }
-  .card-dark { @apply rounded-lg bg-dark p-6 text-on-dark sm:p-8; }
+  .card { @apply rounded-lg border bg-card/80 p-6 sm:p-8; }
+  .card-cream { @apply rounded-lg border bg-muted p-6 sm:p-8; }
+  .card-dark { @apply rounded-lg border bg-dark p-6 text-on-dark sm:p-8; }
   .btn {
-    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border bg-background px-5 text-sm font-medium
-      text-foreground no-underline transition-colors hover:no-underline active:bg-muted disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border bg-muted px-5 text-sm font-semibold
+      text-foreground no-underline transition-colors hover:bg-muted-strong hover:no-underline disabled:pointer-events-none disabled:opacity-50;
   }
-  .btn-primary { @apply border-transparent bg-primary text-primary-foreground active:bg-primary-active disabled:bg-[#e6dfd8] disabled:text-muted-foreground disabled:opacity-100; }
-  .btn-danger { @apply text-bad active:bg-bad/10; }
-  .btn-ghost { @apply border-transparent bg-transparent text-muted-foreground hover:text-foreground; }
+  .btn-primary { @apply border-transparent bg-primary text-primary-foreground hover:bg-primary-active disabled:bg-disabled disabled:text-muted-foreground disabled:opacity-100; }
+  .btn-danger { @apply text-bad hover:bg-bad/10; }
+  .btn-ghost { @apply border-transparent bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground; }
   .btn-on-dark { @apply border-transparent bg-dark-elevated text-on-dark; }
-  .tag { @apply inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-[13px] font-medium text-foreground; }
+  /* Small mono labels in capitals: the reference sites' nav and meta voice. */
+  .label { @apply font-mono text-xs font-medium uppercase tracking-[0.08em]; }
+  .tag { @apply inline-flex items-center gap-1.5 rounded-full border bg-muted px-2.5 py-0.5 font-mono text-xs text-foreground; }
   .field {
-    @apply w-full rounded-md border bg-background px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground/70
-      focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/15;
+    @apply w-full rounded-md border bg-dark-soft px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground/70
+      focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/20;
   }
   .muted { @apply text-muted-foreground; }
   .table { @apply w-full text-sm; }
-  .table th { @apply py-2 pr-3 text-left text-sm font-medium text-muted-foreground; }
+  .table th { @apply py-2 pr-3 text-left font-mono text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground; }
   .table td { @apply border-t py-3 pr-3 align-top; }
   .md p { @apply my-1.5; }
   .md ul { @apply my-1.5 list-disc pl-5; }
-  /* Code and diffs are the dark "code window" surface. */
+  /* A faint grid with a mint glow, behind heroes. */
+  .backdrop-grid {
+    background-image:
+      radial-gradient(ellipse 60% 50% at 50% 0%, var(--glow), transparent 70%),
+      linear-gradient(to right, var(--grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+    background-size: 100% 100%, 64px 64px, 64px 64px;
+  }
   pre.code, pre.diff {
-    @apply m-0 overflow-x-auto rounded-lg bg-dark font-mono text-[13px] leading-relaxed text-on-dark;
+    @apply m-0 overflow-x-auto rounded-lg border bg-dark font-mono text-[13px] leading-relaxed text-on-dark;
   }
   pre.code { @apply px-5 py-4; }
   pre.diff { @apply py-3; }
