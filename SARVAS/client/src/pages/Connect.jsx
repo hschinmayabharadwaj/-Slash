@@ -59,13 +59,11 @@ export default function Connect({ authError, installUrl }) {
 
       <section ref={hero} className="mx-auto grid max-w-[1200px] items-center gap-12 px-6 py-16 lg:grid-cols-2 lg:py-24">
         <div>
-          <p data-fade className="eyebrow">Self-hosted · Sandboxed · Pull-request only</p>
-          <h1 data-split className="display mt-5 text-[2.5rem] leading-[1.05] tracking-[-0.03em] sm:text-6xl lg:text-[4.25rem]">
-            An AI engineer for your repositories, with you in charge.
+          <h1 data-split className="display text-[2.5rem] leading-[1.05] tracking-[-0.03em] sm:text-6xl lg:text-[4.25rem]">
+            Your repositories, with you in charge.
           </h1>
           <p data-fade className="mt-6 max-w-xl text-lg text-body">
-            Ask questions about a repository, or describe a change in plain English. SARVAS plans it, builds it in an
-            isolated sandbox, runs the checks and opens a pull request that an engineer reviews and merges.
+            Describe a change; SARVAS plans, builds, tests and opens a pull request.
           </p>
           {authError && (
             <p data-fade role="alert" className="mt-6 rounded-md border border-bad/30 bg-bad/10 px-3.5 py-2.5 text-sm text-bad">
@@ -91,8 +89,7 @@ export default function Connect({ authError, installUrl }) {
 
       <section className="bg-muted py-24">
         <div className="mx-auto max-w-[1200px] px-6">
-          <p className="eyebrow">How it works</p>
-          <h2 className="display mt-3 max-w-2xl text-4xl leading-[1.1] tracking-[-0.02em] sm:text-5xl">
+          <h2 className="display max-w-2xl text-4xl leading-[1.1] tracking-[-0.02em] sm:text-5xl">
             Every change is planned, checked and reviewed.
           </h2>
           <Stagger onScroll className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -113,7 +110,7 @@ export default function Connect({ authError, installUrl }) {
             Acts with your GitHub permissions, only where the app is installed.
           </h2>
           <p className="mt-4 max-w-xl text-primary-foreground/90">
-            You approve the plan and the diff. An engineer merges the pull request. The agent can't approve or merge its own work.
+            You approve the plan and the diff. An engineer merges the pull request. The agent can’t approve or merge its own work.
           </p>
           <div className="mt-8"><ConnectButton className="border-transparent bg-background text-foreground active:bg-muted" /></div>
         </div>
@@ -130,9 +127,9 @@ export default function Connect({ authError, installUrl }) {
   );
 }
 
-const STEPS = ['Plan the change', 'Approve the scope', 'Build in a sandbox', 'Run the checks', 'Open a pull request'];
+const STEPS = ['Plans the change', 'Waits for your approval', 'Builds it in a sandbox', "Runs the repository's checks", 'Opens a pull request'];
 
-// A dark product window showing one task moving through the pipeline, on a GSAP loop.
+// The pipeline every request goes through, ticking along on a GSAP loop.
 function PipelineWindow() {
   const ref = useRef(null);
   useLayoutEffect(() => {
@@ -147,30 +144,24 @@ function PipelineWindow() {
   }, []);
 
   return (
-    <div ref={ref} aria-hidden="true" className="card-dark mx-auto w-full max-w-lg rounded-xl p-0 sm:p-0">
-      <div className="flex items-center gap-1.5 border-b border-white/10 px-5 py-3">
-        <span className="size-2.5 rounded-full bg-white/15" /><span className="size-2.5 rounded-full bg-white/15" /><span className="size-2.5 rounded-full bg-white/15" />
-        <span className="ml-3 font-mono text-xs text-on-dark-soft">acme/storefront · task #42</span>
+    <div ref={ref} aria-hidden="true" className="card-dark mx-auto w-full max-w-lg rounded-xl">
+      <p className="font-serif text-2xl leading-tight tracking-[-0.01em] text-on-dark">From your request to a pull request</p>
+      <div className="mt-5 h-1 overflow-hidden rounded-full bg-dark-elevated">
+        <div data-bar className="h-full origin-left rounded-full bg-primary" />
       </div>
-      <div className="p-6 sm:p-8">
-        <p className="font-serif text-2xl leading-tight tracking-[-0.01em] text-on-dark">Show the monthly price under the yearly plan</p>
-        <div className="mt-5 h-1 overflow-hidden rounded-full bg-dark-elevated">
-          <div data-bar className="h-full origin-left rounded-full bg-primary" />
-        </div>
-        <ol className="mt-6 space-y-3 font-mono text-[13px]">
-          {STEPS.map((s) => (
-            <li key={s} className="flex items-center gap-3 text-on-dark">
-              <span className="grid size-5 place-items-center rounded-full bg-dark-elevated">
-                <Check data-check className="size-3 text-[#5db8a6]" />
-              </span>
-              {s}
-            </li>
-          ))}
-        </ol>
-        <div data-pr className="mt-6 flex items-center gap-2 rounded-md bg-dark-elevated px-4 py-3 text-sm text-on-dark">
-          <GitPullRequest className="size-4 text-primary" /> Pull request #42 is ready for review
-        </div>
-      </div>
+      <ol className="mt-6 space-y-3">
+        {STEPS.map((s) => (
+          <li key={s} className="flex items-center gap-3 text-on-dark">
+            <span className="grid size-5 place-items-center rounded-full bg-dark-elevated">
+              <Check data-check className="size-3 text-chart-4" />
+            </span>
+            {s}
+          </li>
+        ))}
+      </ol>
+      <p data-pr className="mt-6 flex items-center gap-2 rounded-md bg-dark-elevated px-4 py-3 text-sm text-on-dark">
+        <GitPullRequest className="size-4 text-primary" /> An engineer reviews and merges it on GitHub
+      </p>
     </div>
   );
 }

@@ -1,3 +1,6 @@
+/* Hallmark · shape: kept · genre: modern-minimal · theme: brand (DESIGN.md) · depth: polish · hero: kept · nav: kept · footer: kept · signature: kept
+ * axes: kept · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: polish only · weakest: V, judged from code without a render pass; the drawn window was replaced by the real pipeline steps */
 @import "tailwindcss";
 @import "@fontsource/cormorant-garamond/500.css";
 @import "@fontsource-variable/inter";
@@ -32,6 +35,10 @@
   --chart-3: #5db872;
   --chart-4: #5db8a6;
   --chart-5: #c64545;
+  --diff-add-bg: rgb(93 184 114 / 0.16);
+  --diff-add-ink: #b9e4c3;
+  --diff-del-bg: rgb(198 69 69 / 0.18);
+  --diff-del-ink: #f0b4b4;
   --chart-background: var(--card);
   --chart-foreground: var(--foreground);
   --chart-foreground-muted: var(--muted);
@@ -106,6 +113,9 @@
 
 @layer base {
   * { @apply border-border; }
+  html, body { overflow-x: clip; }
+  html { scrollbar-color: var(--muted-foreground) var(--background); }
+  ::selection { background: var(--muted-strong); color: var(--foreground); }
   body {
     @apply bg-background font-sans text-body antialiased;
     font-size: 16px;
@@ -115,7 +125,7 @@
   code { @apply font-mono text-[0.88em]; }
   :focus-visible { @apply outline-2 outline-offset-2 outline-ring; }
   /* Serif display at weight 500 (the Cormorant substitute's equivalent of 400) with negative tracking. */
-  h1, h2, .display { @apply font-serif font-medium text-foreground; }
+  h1, h2, .display { @apply font-serif font-medium text-foreground; text-wrap: balance; overflow-wrap: break-word; min-width: 0; }
   h1 { font-size: clamp(2rem, 1.4rem + 2vw, 2.75rem); line-height: 1.1; letter-spacing: -0.02em; }
   h2 { font-size: 1.6rem; line-height: 1.2; letter-spacing: -0.01em; }
   h3 { @apply mt-6 mb-2 font-sans text-base font-medium text-foreground; }
@@ -126,7 +136,7 @@
   .card-cream { @apply rounded-lg bg-muted p-6 sm:p-8; }
   .card-dark { @apply rounded-lg bg-dark p-6 text-on-dark sm:p-8; }
   .btn {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-md border bg-background px-5 text-sm font-medium
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border bg-background px-5 text-sm font-medium
       text-foreground no-underline transition-colors hover:no-underline active:bg-muted disabled:pointer-events-none disabled:opacity-50;
   }
   .btn-primary { @apply border-transparent bg-primary text-primary-foreground active:bg-primary-active disabled:bg-[#e6dfd8] disabled:text-muted-foreground disabled:opacity-100; }
@@ -134,14 +144,13 @@
   .btn-ghost { @apply border-transparent bg-transparent text-muted-foreground hover:text-foreground; }
   .btn-on-dark { @apply border-transparent bg-dark-elevated text-on-dark; }
   .tag { @apply inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-[13px] font-medium text-foreground; }
-  .eyebrow { @apply text-xs font-medium uppercase tracking-[1.5px] text-muted-foreground; }
   .field {
     @apply w-full rounded-md border bg-background px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground/70
       focus:border-primary focus:outline-none focus:ring-[3px] focus:ring-primary/15;
   }
   .muted { @apply text-muted-foreground; }
   .table { @apply w-full text-sm; }
-  .table th { @apply py-2 pr-3 text-left text-xs font-medium uppercase tracking-[1.5px] text-muted-foreground; }
+  .table th { @apply py-2 pr-3 text-left text-sm font-medium text-muted-foreground; }
   .table td { @apply border-t py-3 pr-3 align-top; }
   .md p { @apply my-1.5; }
   .md ul { @apply my-1.5 list-disc pl-5; }
@@ -152,14 +161,9 @@
   pre.code { @apply px-5 py-4; }
   pre.diff { @apply py-3; }
   pre.diff span { @apply block whitespace-pre px-5; }
-  pre.diff .add { background: rgb(93 184 114 / 0.16); color: #b9e4c3; }
-  pre.diff .del { background: rgb(198 69 69 / 0.18); color: #f0b4b4; }
+  pre.diff .add { background: var(--diff-add-bg); color: var(--diff-add-ink); }
+  pre.diff .del { background: var(--diff-del-bg); color: var(--diff-del-ink); }
   pre.diff .hunk { @apply text-on-dark-soft; }
-}
-
-@keyframes kokonutui-shimmer-text {
-  from { background-position: 200% center; }
-  to { background-position: -200% center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

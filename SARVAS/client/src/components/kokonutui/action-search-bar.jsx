@@ -325,7 +325,7 @@ function Highlighted({
       {parts.map((p) =>
         p.on ? (
           <b
-            className="font-semibold text-zinc-950 dark:text-white"
+            className="font-semibold text-foreground dark:text-white"
             key={p.start}
           >
             {p.text}
@@ -342,7 +342,7 @@ function Kbd({
   children
 }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-zinc-200 bg-zinc-50 px-1 font-sans text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-sans text-[11px] text-muted-foreground">
       {children}
     </kbd>
   );
@@ -356,7 +356,7 @@ function RowEnd({
     return (
       <LoaderCircle
         aria-hidden="true"
-        className="size-4 animate-spin text-zinc-500 dark:text-zinc-400"
+        className="size-4 animate-spin text-muted-foreground"
       />
     );
   }
@@ -364,15 +364,15 @@ function RowEnd({
     return (
       <Check
         aria-hidden="true"
-        className="size-4 text-zinc-900 dark:text-zinc-100"
+        className="size-4 text-foreground"
       />
     );
   }
   if (item.children) {
-    return <ChevronRight aria-hidden="true" className="size-4 text-zinc-400" />;
+    return <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground" />;
   }
   if (item.href) {
-    return <ArrowUpRight aria-hidden="true" className="size-4 text-zinc-400" />;
+    return <ArrowUpRight aria-hidden="true" className="size-4 text-muted-foreground" />;
   }
   if (item.shortcut) {
     return (
@@ -853,19 +853,19 @@ function ActionSearchBar({
         className={cn(
           "@container/palette absolute inset-x-0 top-0 z-30 overflow-hidden rounded-lg border bg-card",
           open
-            ? "shadow-[0_16px_40px_-16px_rgb(0_0_0/0.2)] dark:shadow-[0_16px_40px_-16px_rgb(0_0_0/0.7)]"
+            ? "shadow-lg"
             : "shadow-xs"
         )}
       >
         <div className="flex h-11 items-center gap-2 px-3">
           <Search
             aria-hidden="true"
-            className="size-4 shrink-0 text-zinc-400 dark:text-zinc-500"
+            className="size-4 shrink-0 text-muted-foreground"
           />
           {stack.map((p, i) => (
             <button
               aria-label={`Back from ${p.label}`}
-              className="inline-flex h-6 shrink-0 items-center rounded-md bg-zinc-100 px-2 font-medium text-xs text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+              className="inline-flex h-6 shrink-0 items-center rounded-md bg-muted px-2 font-medium text-xs text-foreground hover:bg-muted-strong"
               key={p.id}
               onClick={() => {
                 if (i === stack.length - 1 && !running) {
@@ -891,7 +891,7 @@ function ActionSearchBar({
             aria-controls={open ? listboxId : undefined}
             aria-expanded={open}
             autoComplete="off"
-            className="h-full min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+            className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             id={inputId}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
@@ -919,7 +919,7 @@ function ActionSearchBar({
             onPointerDown={(e) => e.preventDefault()}
             ref={panelRef}
           >
-            <div className="border-zinc-100 border-t dark:border-zinc-800/80" />
+            <div className="border-border border-t" />
             <div className="overflow-hidden" ref={bodyRef}>
               <div ref={contentRef}>
                 <div
@@ -941,7 +941,7 @@ function ActionSearchBar({
                     >
                       {section.label && (
                         <div
-                          className="px-2 pt-2 pb-1 font-medium text-[11px] text-zinc-500 dark:text-zinc-400"
+                          className="px-2 pt-2 pb-1 font-medium text-[11px] text-muted-foreground"
                           id={`${uid}-${section.key}`}
                           role="presentation"
                         >
@@ -959,7 +959,7 @@ function ActionSearchBar({
                           <div
                             aria-disabled={running !== null && !status}
                             aria-selected={index === highlighted}
-                            className="group/row flex h-9 cursor-default items-center gap-2.5 rounded-md px-2 text-sm text-zinc-700 aria-disabled:opacity-50 aria-selected:bg-zinc-100 dark:text-zinc-300 dark:aria-selected:bg-zinc-800/70"
+                            className="group/row flex h-9 cursor-default items-center gap-2.5 rounded-md px-2 text-sm text-foreground aria-disabled:opacity-50 aria-selected:bg-muted"
                             id={optionId(index)}
                             key={row.key}
                             onClick={() => choose(row, "pointer")}
@@ -976,14 +976,14 @@ function ActionSearchBar({
                           >
                             <span
                               aria-hidden="true"
-                              className="flex size-4 shrink-0 items-center justify-center text-zinc-400 group-aria-selected/row:text-zinc-700 dark:text-zinc-500 dark:group-aria-selected/row:text-zinc-200"
+                              className="flex size-4 shrink-0 items-center justify-center text-muted-foreground group-aria-selected/row:text-foreground"
                             >
                               {row.item.icon}
                             </span>
                             <span className="min-w-0 flex-1 truncate">
                               {row.path.map((p) => (
                                 <span
-                                  className="text-zinc-400 dark:text-zinc-500"
+                                  className="text-muted-foreground"
                                   key={p.id}
                                 >
                                   {p.label}
@@ -1008,13 +1008,13 @@ function ActionSearchBar({
                   ))}
                 </div>
                 {rows.length === 0 && (
-                  <p className="px-3 pt-1 pb-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  <p className="px-3 pt-1 pb-6 text-center text-sm text-muted-foreground">
                     No results for “{query.trim()}”
                   </p>
                 )}
               </div>
             </div>
-            <div className="flex items-center justify-between gap-3 border-zinc-100 border-t px-3 py-2 text-[11px] text-zinc-500 dark:border-zinc-800/80 dark:text-zinc-400">
+            <div className="flex items-center justify-between gap-3 border-border border-t px-3 py-2 text-[11px] text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="@xs/palette:flex hidden items-center gap-1.5">
                   <Kbd>↑</Kbd>

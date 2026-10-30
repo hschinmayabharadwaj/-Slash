@@ -77,7 +77,7 @@ export default function Dashboard({ onError, installUrl }) {
 
       {returnedFromGitHub && me.installations.length > 0 && (
         <p role="status" className="rounded-lg border border-ok/30 bg-ok/10 px-4 py-3 text-sm text-ok">
-          GitHub saved your repository choice. They're listed below.
+          GitHub saved your repository choice. They’re listed below.
         </p>
       )}
 
@@ -153,7 +153,7 @@ export default function Dashboard({ onError, installUrl }) {
             : <span className="muted">Off: {(me.build?.problems || []).join('; ')}</span>}</dd>
         </dl>
         <p className="mt-4 text-xs text-muted-foreground">
-          Revoke this app's access to your account at any time from{' '}
+          Revoke this app’s access to your account at any time from{' '}
           {safeGitHubUrl(me.revokeUrl) && <a href={me.revokeUrl} target="_blank" rel="noreferrer noopener">
             GitHub → Settings → Applications</a>}, or use Disconnect above.
         </p>

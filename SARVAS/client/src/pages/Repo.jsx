@@ -110,7 +110,7 @@ function Sources({ title, items }) {
       <ul className="space-y-1 text-sm">
         {items.map((c) => (
           <li key={`${c.path}:${c.startLine}`}>
-            <a href={c.url} target="_blank" rel="noreferrer noopener"><code>{c.path}</code> lines {c.startLine}–{c.endLine}</a>
+            <a href={c.url} target="_blank" rel="noreferrer noopener"><code>{c.path}</code> lines {c.startLine} to {c.endLine}</a>
           </li>
         ))}
       </ul>
@@ -147,7 +147,7 @@ function Ask({ owner, name, onError, onRequestChange }) {
       <PlaceholdersAndVanishInput placeholders={PLACEHOLDERS} ariaLabel="Question" maxLength={2000}
         disabled={Boolean(busy)} onSubmit={(_, q) => ask(q)} />
       {busy && (
-        <div className="rounded-md border border-dashed p-4">
+        <div className="border-t pt-5">
           <p className="text-sm font-medium">{busy}</p>
           <ShimmerText text="Reading the code…" className="mt-1 text-sm font-medium" />
         </div>
@@ -155,7 +155,7 @@ function Ask({ owner, name, onError, onRequestChange }) {
       <AnimatePresence initial={false}>
         {answers.map((a) => (
           <motion.article key={a.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-            className="rounded-md border bg-background p-4">
+            className="border-t pt-5">
             <p className="font-medium">{a.question}</p>
             {STATUS_NOTE[a.status] && (
               <p className={cn('tag mt-2', a.status === 'outside_context' ? 'bg-bad/10 text-bad' : '')}>{STATUS_NOTE[a.status]}</p>
@@ -215,7 +215,7 @@ function Build({ owner, name, onError, initial = '' }) {
         </div>
         <div>
           <label htmlFor="crit" className="mb-1.5 block text-sm font-medium">
-            How will we know it's done? <span className="font-normal text-muted-foreground">(optional, one per line)</span>
+            How will we know it’s done? <span className="font-normal text-muted-foreground">(optional, one per line)</span>
           </label>
           <textarea id="crit" className="field min-h-24" value={criteria} maxLength={3000} onChange={(e) => setCriteria(e.target.value)}
             placeholder={'Yearly plan shows "$8/month billed yearly"\nMonthly plan is unchanged'} />
@@ -266,7 +266,7 @@ function Readme({ owner, name, data, onError }) {
     <div className="space-y-4">
       <div>
         <h2>Add a README.md</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Write it yourself, or let the AI draft one from the repository's files and edit it.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Write it yourself, or let the AI draft one from the repository’s files and edit it.</p>
       </div>
       {busy === 'draft'
         ? <div className="field grid min-h-72 place-items-center"><ShimmerText text="Drafting from the repository…" className="text-sm font-medium" /></div>
