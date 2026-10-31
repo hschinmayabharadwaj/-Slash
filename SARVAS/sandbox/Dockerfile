@@ -7,7 +7,7 @@
 # (for checks) no network. No credentials are baked in; the only secret a
 # container ever sees is the AI API key, passed at run time.
 
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY agent/go.mod ./
 COPY agent/ ./

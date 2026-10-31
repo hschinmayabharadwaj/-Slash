@@ -10,7 +10,9 @@
   },
   "github": {
     "clientId": "${GITHUB_CLIENT_ID}",
-    "clientSecret": "${GITHUB_CLIENT_SECRET}"
+    "clientSecret": "${GITHUB_CLIENT_SECRET}",
+    "appId": "${GITHUB_APP_ID}",
+    "privateKeyPath": "${GITHUB_PRIVATE_KEY_PATH}"
   },
   "agentService": {
     "addr": "127.0.0.1:8766",

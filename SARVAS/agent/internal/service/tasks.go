@@ -2,11 +2,13 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"sarvas/internal/config"
 	"sarvas/internal/github"
 	"sarvas/internal/guards"
 	"sarvas/internal/pipeline"
@@ -120,6 +122,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, map[string]string{"error": "The agent is paused by an administrator (kill switch)."})
 		return
 	}
+	// Per-user daily Build limit (sandbox.maxBuildsPerUserPerDay, default 10):
+	// hosted sandboxes and AI APIs bill per use.
+	if buildLimitReached(s.Cfg, s.Tasks, req.Requester) {
+		writeJSON(w, 429, map[string]string{"error": fmt.Sprintf(
+			"Daily Build limit reached (%d per day). Try again tomorrow.", s.Cfg.Sandbox.MaxBuildsPerUserPerDay)})
+		return
+	}
 	t := s.Tasks.Add(pipeline.Task{
 		Owner: req.Owner, Name: req.Name, BaseBranch: req.BaseBranch,
 		Request:            guards.SanitizeUntrusted(req.Request, s.Cfg.Security.MaxRequestChars),
@@ -130,6 +139,20 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	s.Tasks.Record(t.ID, "task_created", map[string]any{"repo": t.FullName(), "requester": t.Requester})
 	go s.drive(t.ID)
 	writeJSON(w, 202, taskView(s.Tasks, s.Tasks.Get(t.ID)))
+}
+
+// buildLimitReached reports whether requester (raw GitHub login) has used up
+// the per-user daily Build quota.
+func buildLimitReached(cfg config.Config, tasks *pipeline.Store, requester string) bool {
+	lim := cfg.Sandbox.MaxBuildsPerUserPerDay
+	if lim <= 0 {
+		return false
+	}
+	who := guards.Slugify(requester, 39)
+	if who == "" {
+		return false
+	}
+	return tasks.CountSince(who, time.Now().Add(-24*time.Hour)) >= lim
 }
 
 func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (pipeline.Task, bool) {
