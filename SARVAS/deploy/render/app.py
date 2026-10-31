@@ -24,6 +24,12 @@ def start_agent_service() -> None:
     # The shared token never leaves the container, so a fresh one per boot is enough.
     os.environ.setdefault("AGENT_SERVICE_TOKEN", secrets.token_hex(32))
     binary = os.path.join(HERE, "bin", "agent-service")
+    # Print the setup check (never secret values) to the logs: the free plan has
+    # no shell, and this is where "Build is off" explains which setting is missing.
+    try:
+        subprocess.run([binary, "-config", CONFIG, "-check"], timeout=90)
+    except subprocess.TimeoutExpired:
+        print("setup check timed out; starting anyway", flush=True)
     proc = subprocess.Popen([binary, "-config", CONFIG])
     atexit.register(proc.terminate)
     for _ in range(50):
