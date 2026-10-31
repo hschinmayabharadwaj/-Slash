@@ -56,6 +56,9 @@ const (
 	modalIODir     = "/io"
 	modalBundle    = "/tmp/repo.tar"
 	modalPatch     = "/tmp/changes.patch"
+	// Modal may run commands as a different user from /workspace's owner;
+	// trust only that folder so git doesn't refuse it as "dubious ownership".
+	modalGit = "git -c safe.directory=" + modalWorkspace + " -C " + modalWorkspace
 )
 
 // modalNetPolicy is the egress policy for one sandbox.
@@ -199,12 +202,16 @@ func (m *Modal) RunAgent(mode, repoDir, ioDir string, timeout time.Duration, api
 		"tar -xf " + modalBundle + " -C " + modalWorkspace,
 	}
 	if mode == "implement" {
-		// Baseline without a commit so `git diff` works on any tree:
-		// intent-to-add entries diff against empty, even with no HEAD.
-		steps = append(steps, "git init -q "+modalWorkspace+" && git -C "+modalWorkspace+" add -A -N")
+		// Commit the unpacked tree as a throwaway baseline, so the diff holds
+		// only the agent's edits (not every existing file as "new").
+		steps = append(steps, "git init -q "+modalWorkspace+" && "+modalGit+" add -A && "+modalGit+
+			" -c user.name=sarvas -c user.email=sarvas@localhost -c commit.gpgsign=false commit -q --no-verify --allow-empty -m baseline")
 	}
-	if _, _, _, err := conn.Exec(ctx, []string{"sh", "-c", strings.Join(steps, " && ")}, nil, "/", timeout); err != nil {
-		return Result{}, fmt.Errorf("modal: stage repo: %w", err)
+	if err := conn.CopyFromLocal(ctx, bundleName, modalBundle); err != nil {
+		return Result{}, fmt.Errorf("modal: send repo: %w", err)
+	}
+	if err := runStep(ctx, conn, "stage repo", strings.Join(steps, " && "), timeout); err != nil {
+		return Result{}, err
 	}
 	if err := conn.CopyFromLocal(ctx, filepath.Join(ioDir, "input.json"), modalIODir+"/input.json"); err != nil {
 		return Result{}, fmt.Errorf("modal: send input: %w", err)
@@ -259,10 +266,9 @@ func (m *Modal) RunChecks(repoDir, command string, timeout time.Duration) (Resul
 	if err := conn.CopyFromLocal(ctx, bundleName, modalBundle); err != nil {
 		return Result{}, fmt.Errorf("modal: send repo: %w", err)
 	}
-	if _, _, _, err := conn.Exec(ctx, []string{"sh", "-c",
-		"mkdir -p " + modalWorkspace + " && tar -xf " + modalBundle + " -C " + modalWorkspace},
-		nil, "/", timeout); err != nil {
-		return Result{}, fmt.Errorf("modal: stage repo: %w", err)
+	if err := runStep(ctx, conn, "stage repo",
+		"mkdir -p "+modalWorkspace+" && tar -xf "+modalBundle+" -C "+modalWorkspace, timeout); err != nil {
+		return Result{}, err
 	}
 	res, err := execAndTail(ctx, conn, []string{"sh", "-c", command}, nil, modalWorkspace, timeout)
 	if err != nil {
@@ -275,13 +281,25 @@ func (m *Modal) RunChecks(repoDir, command string, timeout time.Duration) (Resul
 	return res, nil
 }
 
+// runStep runs a fixed setup script (no secrets in its env) and fails on a
+// non-zero exit, so a broken stage can't surface later as a missing file.
+func runStep(ctx context.Context, conn modalConn, what, script string, timeout time.Duration) error {
+	exit, _, errb, err := conn.Exec(ctx, []string{"sh", "-c", script}, nil, "/", timeout)
+	if err != nil {
+		return fmt.Errorf("modal: %s: %w", what, err)
+	}
+	if exit != 0 {
+		return fmt.Errorf("modal: %s: exit %d: %s", what, exit, strings.TrimSpace(guards.Tail(errb, 500)))
+	}
+	return nil
+}
+
 // fetchPatch copies only the sandbox's git diff out and applies it to the
 // host repo, which keeps .git. A sandbox can never rewrite history.
 func (m *Modal) fetchPatch(ctx context.Context, conn modalConn, repoDir string, timeout time.Duration) error {
-	if _, _, _, err := conn.Exec(ctx, []string{"sh", "-c",
-		"git -C " + modalWorkspace + " add -A -N && git -C " + modalWorkspace + " diff > " + modalPatch},
-		nil, "/", timeout); err != nil {
-		return fmt.Errorf("modal: diff: %w", err)
+	if err := runStep(ctx, conn, "diff",
+		modalGit+" add -A -N && "+modalGit+" diff --binary > "+modalPatch, timeout); err != nil {
+		return err
 	}
 	patch, err := os.CreateTemp("", "sarvas-modal-*.patch")
 	if err != nil {

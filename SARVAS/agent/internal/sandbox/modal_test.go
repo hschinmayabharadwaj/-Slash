@@ -23,6 +23,8 @@ type fakeModalConn struct {
 	execErr    error
 	outputJSON string
 	patch      string
+	exitCode   int
+	sent       []string
 }
 
 func (f *fakeModalConn) Exec(_ context.Context, cmd []string, env map[string]string, _ string, _ time.Duration) (int, string, string, error) {
@@ -30,10 +32,13 @@ func (f *fakeModalConn) Exec(_ context.Context, cmd []string, env map[string]str
 	if f.execErr != nil {
 		return 0, "", "", f.execErr
 	}
-	return 0, "", "", nil
+	return f.exitCode, "", "tar: boom", nil
 }
 
-func (f *fakeModalConn) CopyFromLocal(_ context.Context, _, _ string) error { return nil }
+func (f *fakeModalConn) CopyFromLocal(_ context.Context, _, remotePath string) error {
+	f.sent = append(f.sent, remotePath)
+	return nil
+}
 
 func (f *fakeModalConn) CopyToLocal(_ context.Context, remotePath, localPath string) error {
 	switch remotePath {
@@ -313,5 +318,21 @@ func TestModalUnknownMode(t *testing.T) {
 	}
 	if fc.terminated != 0 {
 		t.Fatal("no sandbox may start for an unknown mode")
+	}
+}
+
+func TestModalAgentSendsRepoAndFailsOnBadStage(t *testing.T) {
+	m, fc := testModal(nil)
+	ioDir := t.TempDir()
+	writeFile(t, filepath.Join(ioDir, "input.json"), `{}`)
+	if _, err := m.RunAgent("implement", t.TempDir(), ioDir, time.Second, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.sent) == 0 || fc.sent[0] != modalBundle {
+		t.Fatalf("the repo bundle must be sent before staging, sent %v", fc.sent)
+	}
+	fc.exitCode = 2
+	if _, err := m.RunAgent("implement", t.TempDir(), ioDir, time.Second, ""); err == nil || !strings.Contains(err.Error(), "stage repo") {
+		t.Fatalf("a failed stage must stop the run, got %v", err)
 	}
 }
