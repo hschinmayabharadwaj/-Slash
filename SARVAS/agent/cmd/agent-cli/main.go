@@ -112,8 +112,8 @@ func main() {
 		target = &github.App{AppID: gh.AppID, PrivateKeyPath: gh.PrivateKeyPath, InstallationID: gh.InstallationID}
 	}
 
-	box := sandbox.New(cfg)
-	if problems := box.Preflight(); len(problems) > 0 {
+	box := sandbox.NewRunner(cfg)
+	if problems := sandbox.NewPreflight(cfg)(); len(problems) > 0 {
 		fatal("%s", strings.Join(problems, "\n"))
 	}
 	work, err := os.MkdirTemp("", "agent-cli-")

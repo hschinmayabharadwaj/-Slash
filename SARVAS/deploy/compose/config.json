@@ -69,5 +69,10 @@
     "cpuLimit": "1.0",
     "pidsLimit": 128
   },
+  "sandbox": {
+    "backend": "docker",
+    "modalImage": "sarvas-sandbox",
+    "maxBuildsPerUserPerDay": 10
+  },
   "repos": {}
 }

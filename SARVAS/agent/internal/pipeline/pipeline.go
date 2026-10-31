@@ -154,6 +154,19 @@ func (s *Store) Lookup(id int) (Task, bool) {
 	return *t, true
 }
 
+// CountSince counts tasks from one requester created at or after since.
+func (s *Store) CountSince(requester string, since time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, t := range s.tasks {
+		if t.Requester == requester && !t.Created.Before(since) {
+			n++
+		}
+	}
+	return n
+}
+
 // TaskEvents returns the audit events of one task.
 func (s *Store) TaskEvents(id int) []Event {
 	s.mu.Lock()

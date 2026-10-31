@@ -54,12 +54,11 @@ func New(cfg config.Config) *Server {
 	s := &Server{Cfg: cfg, Provider: ai.New(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL),
 		Tasks: pipeline.NewStore()}
 	if cfg.AppConfigured() {
-		box := sandbox.New(cfg)
-		s.Worker = &pipeline.Worker{Cfg: cfg, Store: s.Tasks, Notify: notifier{s.Tasks}, Sandbox: box,
+		s.Worker = &pipeline.Worker{Cfg: cfg, Store: s.Tasks, Notify: notifier{s.Tasks}, Sandbox: sandbox.NewRunner(cfg),
 			WorkRoot: cfg.AgentService.WorkDir,
 			Target: &github.App{AppID: cfg.GitHub.AppID, PrivateKeyPath: cfg.GitHub.PrivateKeyPath,
 				InstallationID: cfg.GitHub.InstallationID}}
-		s.Preflight = box.Preflight
+		s.Preflight = sandbox.NewPreflight(cfg)
 	}
 	return s
 }

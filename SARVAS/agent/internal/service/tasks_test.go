@@ -188,3 +188,57 @@ func jsonNum(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestDailyBuildLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.AI.Provider, cfg.AgentService.Token = "sim", token
+	cfg.Security.KillSwitchFile = filepath.Join(t.TempDir(), "KILL")
+	cfg.Sandbox.MaxBuildsPerUserPerDay = 2
+	s := New(cfg)
+	s.Worker = &pipeline.Worker{Cfg: cfg, Store: s.Tasks, Notify: notifier{s.Tasks}, Sandbox: boxFake{},
+		Target: targetFake{originRepo(t)}, WorkRoot: t.TempDir()}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	body := `{"owner":"o","name":"r","baseBranch":"main","request":"Add a greeting","requester":"bob"}`
+	for i := 0; i < 2; i++ {
+		if resp, _ := post(t, srv.URL+"/v1/tasks", token, body); resp.StatusCode != 202 {
+			t.Fatalf("task %d: %d", i, resp.StatusCode)
+		}
+	}
+	if resp, out := post(t, srv.URL+"/v1/tasks", token, body); resp.StatusCode != 429 ||
+		!strings.Contains(out["error"].(string), "Daily Build limit") {
+		t.Fatalf("third daily build must be limited: %d %v", resp.StatusCode, out)
+	}
+	// Another user still has quota, and anonymous requests bypass the counter.
+	if resp, _ := post(t, srv.URL+"/v1/tasks", token,
+		`{"owner":"o","name":"r","baseBranch":"main","request":"x","requester":"alice"}`); resp.StatusCode != 202 {
+		t.Fatalf("other user: %d", resp.StatusCode)
+	}
+	if resp, _ := post(t, srv.URL+"/v1/tasks", token,
+		`{"owner":"o","name":"r","baseBranch":"main","request":"x"}`); resp.StatusCode != 202 {
+		t.Fatalf("anonymous: %d", resp.StatusCode)
+	}
+}
+
+// Pure (no HTTP listener) proof of the quota logic for sandboxes where
+// loopback binds are blocked.
+func TestDailyBuildLimitPure(t *testing.T) {
+	cfg := config.Default() // limit 10
+	store := pipeline.NewStore()
+	for i := 0; i < 10; i++ {
+		store.Add(pipeline.Task{Requester: "bob"})
+	}
+	if !buildLimitReached(cfg, store, "bob") {
+		t.Fatal("bob at quota must be limited")
+	}
+	if buildLimitReached(cfg, store, "alice") {
+		t.Fatal("alice has quota left")
+	}
+	if buildLimitReached(cfg, store, "") {
+		t.Fatal("anonymous must bypass the counter")
+	}
+	cfg.Sandbox.MaxBuildsPerUserPerDay = 0
+	if buildLimitReached(cfg, store, "bob") {
+		t.Fatal("limit 0 means unlimited")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -96,6 +97,22 @@ type Docker struct {
 	PidsLimit   int    `json:"pidsLimit"`
 }
 
+// Sandbox selects which backend runs Build tasks. "docker" is the default;
+// "modal" runs them in Modal Sandboxes (for hosts without Docker, such as
+// Hugging Face Spaces or Render). Modal tokens come from the environment
+// (MODAL_TOKEN_ID / MODAL_TOKEN_SECRET) only, never from the config file.
+type Sandbox struct {
+	Backend string `json:"backend"` // "docker" | "modal"
+	// ModalImage is the named Modal image (published once from
+	// sandbox/Dockerfile, never built per task) used by the modal backend.
+	ModalImage string `json:"modalImage"`
+	// MaxBuildsPerUserPerDay caps Build tasks per requester per rolling 24h
+	// (0 = unlimited). Modal and hosted AI APIs bill per use.
+	MaxBuildsPerUserPerDay int    `json:"maxBuildsPerUserPerDay"`
+	TokenID                string `json:"-"`
+	TokenSecret            string `json:"-"`
+}
+
 type Service struct {
 	Addr    string `json:"addr"`    // agent-service listen address (loopback)
 	Token   string `json:"token"`   // shared bearer token with the web server
@@ -118,6 +135,7 @@ type Config struct {
 	Security     Security        `json:"security"`
 	Agent        Agent           `json:"agent"`
 	Docker       Docker          `json:"docker"`
+	Sandbox      Sandbox         `json:"sandbox"`
 	AgentService Service         `json:"agentService"`
 	Repos        map[string]Repo `json:"repos"`
 }
@@ -146,6 +164,7 @@ func Default() Config {
 			PlanTimeoutS: 300, ImplementTimeoutS: 900, CheckTimeoutS: 600, MaxConcurrentTasks: 2,
 		},
 		Docker:       Docker{Image: "sarvas-sandbox:latest", MemoryLimit: "1g", CPULimit: "1.0", PidsLimit: 128},
+		Sandbox:      Sandbox{Backend: "docker", ModalImage: "sarvas-sandbox", MaxBuildsPerUserPerDay: 10},
 		AgentService: Service{Addr: "127.0.0.1:8766", WorkDir: "./data/work"},
 		Repos:        map[string]Repo{},
 	}
@@ -192,8 +211,10 @@ func Load(path string) (Config, error) {
 	if p := os.Getenv("AI_PROVIDER"); p != "" {
 		cfg.AI.Provider = p
 	}
-	if cfg.AI.APIKey == "" {
-		cfg.AI.APIKey = os.Getenv("AI_API_KEY")
+	// AI_API_KEY wins like the other AI_* overrides, so switching AI_PROVIDER
+	// never sends the file's key (e.g. ${GEMINI_API_KEY}) to another provider.
+	if v := os.Getenv("AI_API_KEY"); v != "" {
+		cfg.AI.APIKey = v
 	}
 	if cfg.AI.APIKey == "" {
 		cfg.AI.APIKey = os.Getenv("GEMINI_API_KEY")
@@ -225,6 +246,23 @@ func Load(path string) (Config, error) {
 	if cfg.AgentService.Token == "" {
 		cfg.AgentService.Token = os.Getenv("AGENT_SERVICE_TOKEN")
 	}
+	if v := os.Getenv("SANDBOX_BACKEND"); v != "" {
+		cfg.Sandbox.Backend = v
+	}
+	if v := os.Getenv("SANDBOX_MODAL_IMAGE"); v != "" {
+		cfg.Sandbox.ModalImage = v
+	}
+	if v := os.Getenv("SANDBOX_MAX_BUILDS_PER_USER_PER_DAY"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("SANDBOX_MAX_BUILDS_PER_USER_PER_DAY: %w", err)
+		}
+		cfg.Sandbox.MaxBuildsPerUserPerDay = n
+	}
+	// Modal tokens live in the environment only, so they can never be
+	// committed in a config file or echoed by config dumps.
+	cfg.Sandbox.TokenID = os.Getenv("MODAL_TOKEN_ID")
+	cfg.Sandbox.TokenSecret = os.Getenv("MODAL_TOKEN_SECRET")
 	// Relative paths are relative to the config file, not the working directory.
 	dir := filepath.Dir(path)
 	for _, p := range []*string{&cfg.Security.KillSwitchFile, &cfg.GitHub.PrivateKeyPath, &cfg.AgentService.WorkDir} {
@@ -254,6 +292,15 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("ai.provider must be gemini, openai, ollama or sim, got %q", c.AI.Provider)
+	}
+	if c.Sandbox.Backend != "docker" && c.Sandbox.Backend != "modal" {
+		return fmt.Errorf("sandbox.backend must be docker or modal, got %q", c.Sandbox.Backend)
+	}
+	if c.Sandbox.MaxBuildsPerUserPerDay < 0 {
+		return errors.New("sandbox.maxBuildsPerUserPerDay must not be negative (0 = unlimited)")
+	}
+	if c.Sandbox.Backend == "modal" && c.Sandbox.ModalImage == "" {
+		return errors.New("sandbox.modalImage must name the published Modal image when sandbox.backend is modal")
 	}
 	for name, v := range map[string]string{"agentNetwork": c.Security.AgentNetwork, "checksNetwork": c.Security.ChecksNetwork} {
 		if v != "none" && v != "bridge" {

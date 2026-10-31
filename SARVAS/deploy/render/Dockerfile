@@ -6,8 +6,8 @@
 # Docker Build Context = . (the SARVAS folder). Local check:
 #   docker build -f deploy/render/Dockerfile -t sarvas-api .
 
-# --- Go agent-service (stdlib only, static binary)
-FROM golang:1.24-bookworm AS agent
+# --- Go agent-service (static binary; the Modal Go SDK is the only non-stdlib dep)
+FROM golang:1.25-bookworm AS agent
 WORKDIR /src
 COPY agent/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-service ./cmd/agent-service

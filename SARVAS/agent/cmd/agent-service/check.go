@@ -46,7 +46,7 @@ func runCheck(cfg config.Config) int {
 	fmt.Println("\nSandbox (Build tasks)")
 	if !cfg.AppConfigured() {
 		c.warn("skipped: Build tasks are off until the GitHub App key is configured")
-	} else if problems := sandbox.New(cfg).Preflight(); len(problems) > 0 {
+	} else if problems := sandbox.NewPreflight(cfg)(); len(problems) > 0 {
 		for _, p := range problems {
 			c.fail("%s", p)
 		}

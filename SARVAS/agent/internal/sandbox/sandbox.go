@@ -38,6 +38,29 @@ type Runner interface {
 	RunChecks(repoDir, command string, timeout time.Duration) (Result, error)
 }
 
+// Backend is a Runner plus its readiness check.
+type Backend interface {
+	Runner
+	Preflight() []string
+}
+
+// NewRunner returns the configured sandbox backend: Docker by default, or
+// Modal Sandboxes when sandbox.backend is "modal" (for hosts without Docker).
+func NewRunner(cfg config.Config) Runner {
+	if cfg.Sandbox.Backend == "modal" {
+		return NewModal(cfg)
+	}
+	return New(cfg)
+}
+
+// NewPreflight returns the readiness check for the configured backend.
+func NewPreflight(cfg config.Config) func() []string {
+	if cfg.Sandbox.Backend == "modal" {
+		return NewModal(cfg).Preflight
+	}
+	return New(cfg).Preflight
+}
+
 type Docker struct {
 	Cfg           config.Docker
 	AgentNetwork  string
