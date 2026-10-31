@@ -96,7 +96,7 @@ function Header({ path, login, isAdmin, onLogout }) {
   const nav = (pillId) => (
     <>
       {links.map(([to, label, Icon]) => (
-        <Link key={to} to={to} className={cn('relative flex items-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium no-underline hover:no-underline',
+        <Link key={to} to={to} className={cn('label relative flex items-center gap-1.5 rounded-md px-3.5 py-2 no-underline hover:no-underline',
           section === to ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>
           {section === to && (
             <motion.span layoutId={pillId} className="absolute inset-0 rounded-md bg-muted" transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }} />
@@ -109,7 +109,7 @@ function Header({ path, login, isAdmin, onLogout }) {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b bg-background">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
         <Link to="/" className="flex items-center gap-2 font-medium text-foreground no-underline hover:no-underline">
           <Logo /> SARVAS

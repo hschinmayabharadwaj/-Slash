@@ -77,7 +77,7 @@ export default function Dashboard({ onError, installUrl }) {
 
       {returnedFromGitHub && me.installations.length > 0 && (
         <p role="status" className="rounded-lg border border-ok/30 bg-ok/10 px-4 py-3 text-sm text-ok">
-          GitHub saved your repository choice. They're listed below.
+          GitHub saved your repository choice. They’re listed below.
         </p>
       )}
 
@@ -94,7 +94,7 @@ export default function Dashboard({ onError, installUrl }) {
           const body = (
             <>
               <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-              <CountUp value={value} className="mt-4 block font-serif text-5xl font-medium leading-none tabular-nums text-foreground" />
+              <CountUp value={value} className="mt-4 block font-display text-5xl font-semibold leading-none tracking-[-0.04em] tabular-nums text-foreground" />
               <span className="text-sm text-muted-foreground">{label}</span>
             </>
           );
@@ -153,7 +153,7 @@ export default function Dashboard({ onError, installUrl }) {
             : <span className="muted">Off: {(me.build?.problems || []).join('; ')}</span>}</dd>
         </dl>
         <p className="mt-4 text-xs text-muted-foreground">
-          Revoke this app's access to your account at any time from{' '}
+          Revoke this app’s access to your account at any time from{' '}
           {safeGitHubUrl(me.revokeUrl) && <a href={me.revokeUrl} target="_blank" rel="noreferrer noopener">
             GitHub → Settings → Applications</a>}, or use Disconnect above.
         </p>
@@ -170,12 +170,12 @@ function InstallApp({ login, installUrl }) {
     [false, "You'll come straight back here with your repositories ready"],
   ];
   return (
-    <section className="rounded-lg bg-primary p-8 text-primary-foreground sm:p-12">
-      <h2 className="text-3xl text-primary-foreground sm:text-4xl">Connect your repositories</h2>
+    <section className="card backdrop-grid sm:p-12">
+      <h2 className="text-3xl sm:text-4xl">Connect your repositories</h2>
       <ol className="mt-6 space-y-3">
         {steps.map(([done, text], i) => (
           <li key={text} className="flex items-center gap-3">
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary-foreground/20 text-xs font-medium">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full border bg-muted font-mono text-xs text-link">
               {done ? <Check className="size-3.5" aria-hidden="true" /> : i + 1}
             </span>
             {text}
@@ -184,11 +184,11 @@ function InstallApp({ login, installUrl }) {
       </ol>
       {installUrl ? (
         // Full-page navigation: GitHub's own page grants the access, then returns via the App's Setup URL.
-        <a href={installUrl} className="btn mt-8 h-11 border-transparent bg-background px-6 text-foreground active:bg-muted">
+        <a href={installUrl} className="btn btn-primary mt-8 h-11 px-6">
           Install the GitHub App <ArrowRight className="size-4" aria-hidden="true" />
         </a>
       ) : (
-        <p className="mt-8 text-sm text-primary-foreground/90">
+        <p className="mt-8 text-sm text-muted-foreground">
           Ask your administrator for the App's install link (they can show it here by setting GITHUB_APP_SLUG).
         </p>
       )}

@@ -37,11 +37,10 @@ export default function Proposal({ id, onError }) {
         <ArrowLeft className="size-4" aria-hidden="true" /> Back to {p.fullName}
       </Link>
       <section className="card">
-        <p className="eyebrow">{p.fullName}</p>
+        <p className="text-sm text-muted-foreground">{p.fullName}</p>
         <h1 className="mt-1">{p.actionLabel}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Base branch <code>{p.baseBranch}</code>. Approving creates a new branch with exactly this diff and opens a
-          pull request. Your default branch is not touched.
+          Approving opens a pull request with exactly this diff, based on <code>{p.baseBranch}</code>.
         </p>
         <div className="mt-4"><Diff text={p.diff} /></div>
 
