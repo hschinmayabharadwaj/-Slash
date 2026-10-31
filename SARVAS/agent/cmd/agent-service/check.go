@@ -50,6 +50,8 @@ func runCheck(cfg config.Config) int {
 		for _, p := range problems {
 			c.fail("%s", p)
 		}
+	} else if cfg.Sandbox.Backend == "modal" {
+		c.ok("Modal tokens work and the sandbox image %s is published", cfg.Sandbox.ModalImage)
 	} else {
 		c.ok("Docker is reachable and the sandbox image %s exists", cfg.Docker.Image)
 	}
